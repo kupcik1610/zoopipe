@@ -1,35 +1,36 @@
 #!/usr/bin/env python3
 """Run the fish-image pipeline over a CSV.
 
-  python3 run.py                      # 25-row test set, free sources only
+  python3 run.py                      # 25-row test set
   python3 run.py --csv data/ryby.csv  # full 1531
   python3 run.py --limit 5            # just the first 5 rows
-  python3 run.py --gap-generate       # Imagen-fill species with no real photo (needs GEMINI_API_KEY)
-  python3 run.py --no-grade           # skip AI grading (pick first usable candidate)
+  python3 run.py --gap-generate       # Imagen-fill species with no usable free photo
+  python3 run.py --no-grade           # skip the quality grade (still license-checks)
 
-Stages per row:  FIND -> DOWNLOAD -> GRADE -> PICK best -> flip/whiten -> SAVE
-Outputs: out/images/<kod>.jpg, out/manifest.csv, out/contact_sheet.html
+Per row:  Google image search -> LICENSE-CHECK (Gemini reads source page)
+          -> DOWNLOAD -> GRADE quality (Gemini) -> PICK best -> cut bg + flip -> SAVE
+Outputs:  out/<run>/images, out/<run>/originals, manifest.csv, contact_sheet.html
 """
 import argparse, csv, html, os, sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from src import config, sources, grade as grading, generate, process
+from src import config, sources, grade as grading, generate, process, license_check
 
 BASE_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
 
 MANIFEST_FIELDS = ["id", "kod", "nazov_lat", "nazov_sk", "skupina", "status",
-                   "source", "license", "attribution", "score", "facing",
+                   "source", "license", "license_reason", "attribution", "score", "facing",
                    "n_candidates", "image_file", "original_file", "page", "notes"]
 
 
 def process_row(r, args, img_dir):
     latin, sk = r["nazov_lat"], r["nazov_sk"]
     rec = {k: r.get(k, "") for k in ("id", "kod", "nazov_lat", "nazov_sk", "skupina")}
-    rec.update({"status": "no_photo", "source": "", "license": "", "attribution": "",
-                "score": "", "facing": "", "n_candidates": 0, "image_file": "",
-                "original_file": "", "page": "", "notes": ""})
+    rec.update({"status": "no_photo", "source": "", "license": "", "license_reason": "",
+                "attribution": "", "score": "", "facing": "", "n_candidates": 0,
+                "image_file": "", "original_file": "", "page": "", "notes": ""})
 
     cands = sources.find_candidates(latin)
     rec["n_candidates"] = len(cands)
@@ -37,24 +38,30 @@ def process_row(r, args, img_dir):
     from src.http import get_bytes
     graded = []
     for c in cands:
+        # 1) verify it's free to use -- Gemini reads the image's source page
+        lic = license_check.check(c.get("page", ""), latin)
+        if not lic["free"]:
+            continue
+        # 2) download the image
         try:
             img = get_bytes(c["url"])
         except Exception:
             continue
         if not img or len(img) < 2000 or not process.is_image(img):
             continue   # skip downloads that aren't real raster images (e.g. HTML pages)
+        # 3) grade image quality
         v = {"usable": True, "score": 0.5, "facing": "other"} if args.no_grade else \
             grading.grade(img, latin, sk)
         sc = grading.quality_score(v)
         if not args.no_grade and not v.get("graded"):
             sc = 0.0   # grading was meant to run but errored -> don't trust this candidate
-        graded.append((sc, v, c, img))
+        graded.append((sc, v, c, img, lic))
 
     graded.sort(key=lambda x: x[0], reverse=True)
     best = next((g for g in graded if g[0] > 0), None)
 
     if best:
-        score, v, c, img = best
+        score, v, c, img, lic = best
         out, ext, notes = process.normalize(img, facing=v.get("facing", "other"))
         fn = f"{r['kod'] or r['id']}.{ext}"
         with open(os.path.join(img_dir, fn), "wb") as f:
@@ -65,10 +72,10 @@ def process_row(r, args, img_dir):
         ofn = f"{r['kod'] or r['id']}.{process._ext(img)}"
         with open(os.path.join(orig_dir, ofn), "wb") as f:
             f.write(img)
-        rec.update({"status": "photo", "source": c["source"], "license": c["license"],
-                    "attribution": (c["attribution"] or "")[:200], "score": round(score, 3),
-                    "facing": v.get("facing", ""), "image_file": fn, "original_file": ofn,
-                    "page": c.get("page", ""),
+        rec.update({"status": "photo", "source": c["source"], "license": lic["license"],
+                    "license_reason": lic["reason"], "attribution": (c["attribution"] or "")[:200],
+                    "score": round(score, 3), "facing": v.get("facing", ""),
+                    "image_file": fn, "original_file": ofn, "page": c.get("page", ""),
                     "notes": ";".join(notes) + (f"; {v.get('note','')}" if v.get("note") else "")})
     elif args.gap_generate:
         gen = generate.generate(latin, sk)
@@ -95,8 +102,9 @@ def contact_sheet(rows, out_dir):
     <b>{html.escape(r['nazov_lat'])}</b><br>
     <span class=sk>{html.escape(r['nazov_sk'])}</span><br>
     <span class=badge style='background:{badge}'>{r['status']}</span>
-    <span class=src>{html.escape(str(r['source']))} {html.escape(str(r['license']))[:24]}</span><br>
+    <span class=src>{html.escape(str(r['source']))} · {html.escape(str(r['license']))[:24]}</span><br>
     <span class=sc>score {r['score']} · {r['n_candidates']} cand · {html.escape(str(r['facing']))}</span>
+    <div class=why>{html.escape(str(r.get('license_reason','')))[:160]}</div>
   </div></div>""")
     doc = f"""<!doctype html><meta charset=utf-8><title>fish contact sheet</title>
 <style>
@@ -111,6 +119,7 @@ h1{{font-size:18px}}
 .badge{{color:#fff;padding:1px 6px;border-radius:4px;font-size:11px}}
 .src{{color:#888;font-size:11px}}
 .sc{{color:#999;font-size:11px}}
+.why{{color:#555;font-size:11px;margin-top:4px;font-style:italic}}
 </style>
 <h1>Fish catalog — {len(rows)} rows · {sum(1 for r in rows if r['status']=='photo')} photos ·
 {sum(1 for r in rows if r['status']=='ai_generated')} AI · {sum(1 for r in rows if r['status']=='no_photo')} missing</h1>
@@ -142,10 +151,9 @@ def main():
         rows = rows[:args.limit]
 
     from src.client import backend_name
-    grading_on = config.ai_enabled() and not args.no_grade
-    print(f"Sources: iNaturalist, Wikimedia, GBIF" +
-          (", GoogleCSE" if (config.GCSE_KEY and config.GCSE_CX) else "") +
-          (f" | grading={config.GEMINI_MODEL} ({backend_name()})" if grading_on else " | grading=OFF") +
+    print(f"Source: Google Custom Search ({'on' if config.search_enabled() else 'NO KEYS - set GCSE_KEY/GCSE_CX'})"
+          f" | license-check + grading: " +
+          (f"{config.GEMINI_MODEL} ({backend_name()})" if config.ai_enabled() else "OFF (no AI backend)") +
           (f" | gap-gen={config.IMAGEN_MODEL}" if args.gap_generate and config.ai_enabled() else ""))
     print(f"Processing {len(rows)} rows from {args.csv}  ({args.workers} workers)")
     print(f"Output -> out/{name}/\n")

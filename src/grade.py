@@ -42,18 +42,27 @@ def grade(image_bytes, latin, sk):
             "note": f"grade error: {last}"}
 
 def quality_score(v):
-    """Collapse a verdict into a single sortable score (higher = better)."""
+    """Collapse a verdict into a single sortable score (higher = better).
+
+    HARD-REJECT only on things we CANNOT fix downstream:
+      not a photo / not the animal / watermark / multiple subjects /
+      not side-on / wrong species.
+    We deliberately DO NOT gate on background or facing -- rembg removes the
+    background and we flip to face left, so a messy background or right-facing
+    fish is fine. (We also ignore Gemini's holistic 'usable' field, which marks
+    photos unusable for a dirty background we're about to delete.)
+    """
     if not v.get("graded"):
         return v.get("score", 0.4)
-    # hard rejections: not a photo, not an animal, or any watermark/text overlay
-    if (v.get("is_photo") is False or v.get("is_animal") is False
-            or v.get("has_watermark_or_text") is True or v.get("usable") is False):
-        return 0.0
+    if v.get("is_photo") is False:              return 0.0
+    if v.get("is_animal") is False:             return 0.0
+    if v.get("has_watermark_or_text") is True:  return 0.0
+    if v.get("single_subject") is False:        return 0.0   # bad for a clean cutout
+    if v.get("side_profile") is False:          return 0.0   # catalog needs lateral view
+    if v.get("matches_species") == "no":        return 0.0
     s = float(v.get("score", 0.5) or 0.5)
-    if v.get("single_subject"):    s += 0.15
-    if v.get("side_profile"):      s += 0.20
-    if v.get("background_clean"):  s += 0.10
-    if v.get("blurry"):            s -= 0.30
-    if v.get("matches_species") == "yes":   s += 0.20
-    elif v.get("matches_species") == "no":  s -= 0.40
+    if v.get("matches_species") == "yes":       s += 0.30
+    elif v.get("matches_species") == "likely":  s += 0.10
+    if v.get("background_clean"):               s += 0.10    # minor bonus; bg is removed anyway
+    if v.get("blurry"):                         s -= 0.40
     return max(0.0, min(2.0, s))

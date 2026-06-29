@@ -1,8 +1,9 @@
-"""Central config + the exact image spec we grade against.
+"""Central config + the prompts Gemini runs against.
 
 Secrets are read from environment variables (or a .env file next to run.py).
-Nothing here is required to run the FREE stage (iNaturalist/Wikimedia/GBIF).
-The Google stages activate automatically once the matching keys are present.
+The pipeline finds candidates via Google Custom Search, then uses Gemini twice:
+once to verify the image is free to use (by reading its source page), and once
+to grade the image quality. Both need an AI backend (Vertex or a Gemini key).
 """
 import os
 
@@ -29,7 +30,7 @@ GCP_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 # Gemini Developer API key (AI Studio) -- alternative to Vertex.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# ---- Google Programmable Search (optional candidate source) -----------------
+# ---- Google Programmable Search (the image source) --------------------------
 GCSE_KEY = os.environ.get("GCSE_KEY", "")
 GCSE_CX  = os.environ.get("GCSE_CX", "")
 
@@ -39,38 +40,39 @@ IMAGEN_MODEL = os.environ.get("IMAGEN_MODEL", "imagen-3.0-generate-002")
 def ai_enabled():
     return bool((USE_VERTEX and GCP_PROJECT) or GEMINI_API_KEY)
 
-# ---- licensing policy -------------------------------------------------------
-# We FLIP and WHITEN images => we create derivatives. So we may ONLY use
-# licenses that allow BOTH commercial use AND modification.
-# That excludes every NC (non-commercial) and ND (no-derivatives) license.
-ALLOWED_LICENSES = {
-    "cc0", "cc-0", "pd", "publicdomain", "public domain", "no known copyright",
-    "cc-by", "cc-by-4.0", "cc-by-3.0", "cc-by-2.0", "cc-by-2.5", "cc-by-1.0",
-    "cc-by-sa", "cc-by-sa-4.0", "cc-by-sa-3.0", "cc-by-sa-2.0",  # SA = allowed but attribution+sharealike
-    "attribution", "attribution-sharealike",
-}
-
-def license_ok(code):
-    if not code:
-        return False
-    c = code.strip().lower().replace("_", "-").replace("https://", "").replace("http://", "")
-    # normalise URLs like creativecommons.org/licenses/by/4.0/
-    if "creativecommons.org/publicdomain" in c:
-        return True
-    if "creativecommons.org/licenses/by/" in c or "creativecommons.org/licenses/by-sa/" in c:
-        return True
-    if "/by-nc" in c or "/by-nd" in c or "-nc-" in c or c.endswith("-nc") or "-nd" in c:
-        return False
-    return c in ALLOWED_LICENSES
+def search_enabled():
+    return bool(GCSE_KEY and GCSE_CX)
 
 # ---- the image we want ------------------------------------------------------
 SPEC = (
     "a clear SIDE-PROFILE photo of ONE single whole fish/animal, the entire body "
-    "visible, sharp focus, plain/uncluttered background, suitable for a clean "
-    "product catalog. The animal should ideally face left (head on the left)."
+    "visible, sharp focus, suitable for a clean product catalog. (Background and "
+    "facing direction don't matter -- we remove the background and flip to face left.)"
 )
 
-# Prompt for the Gemini vision grader. Must return strict JSON.
+# Prompt 1: verify the image is FREE TO USE, by reading its source web page.
+LICENSE_PROMPT = """You verify whether an image found online is FREE TO USE COMMERCIALLY,
+including the right to MODIFY it (we crop, flip and change its background).
+
+The image shows the aquarium species "{latin}".
+Source page URL: {url}
+Text extracted from that page (truncated):
+\"\"\"{page}\"\"\"
+
+Decide using ONLY explicit licensing information on the page. Rules:
+- FREE only if the page explicitly grants a commercial + modify license:
+  CC0, Public Domain, CC-BY, CC-BY-SA, or a clear "free to use, including commercially" statement.
+- NOT FREE if: no license is stated, "all rights reserved", any NonCommercial (NC) or
+  NoDerivatives (ND) license, "editorial use only", or any paid / stock-photo license.
+- If you are unsure or the evidence is weak, answer NOT free.
+
+Return ONLY a compact JSON object:
+- "free": true or false
+- "license": short label, e.g. "CC-BY 4.0", "CC0", "Public Domain", or "none"
+- "reason": ONE short sentence explaining the decision, quoting the licensing evidence you saw on the page
+"""
+
+# Prompt 2: grade the image quality for the catalog. Must return strict JSON.
 GRADE_PROMPT = """You grade a candidate image for an aquarium-shop product catalog.
 Target species (scientific name): "{latin}"  (common/local name: "{sk}").
 We need: {spec}
@@ -85,7 +87,6 @@ Look at the image and answer ONLY with a compact JSON object, no markdown, with 
 - "facing": "left", "right", or "other" - which way the head points
 - "background_clean": true if background is plain/simple (easy to cut out)
 - "blurry": true if out of focus or very low quality
-- "usable": true ONLY if it is a clean real photo, single subject, no watermark/text, good for a catalog
 - "score": number 0.0-1.0 overall quality for our purpose
 Return only the JSON."""
 

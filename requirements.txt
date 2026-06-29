@@ -1,0 +1,4 @@
+# Core pipeline needs NOTHING beyond the Python standard library.
+# These are OPTIONAL and only enable image normalization (flip + white background):
+pillow      # flip-to-face-left, compositing onto white
+rembg       # background removal (pulls onnxruntime ~heavy); skip if you only want raw photos

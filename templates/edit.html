@@ -3,9 +3,6 @@
   <h1>Adjust <span class="muted">— {{ rel }}</span></h1>
 
   {% if saved %}<p class="ok note">Saved.</p>{% endif %}
-  {% if not has_orig %}
-    <p class="err note">No saved original — background removal won't re-run cleanly.</p>
-  {% endif %}
 
   <div class="card">
     <div class="editor-pv-wrap">

@@ -22,17 +22,3 @@
     <input class="pick" type="checkbox" name="pick" value="{{ idx }}|||{{ res.image }}" hidden>
   </figure>
 {% endmacro %}
-
-{# A processed output image, or an error note if it failed. #}
-{% macro output_card(rel, note) %}
-  {% if rel %}
-    <div class="thumb">
-      <img src="/out/{{ rel }}" data-rel="{{ rel }}" alt="">
-      <div class="pickrow"><a href="/edit?img={{ rel }}">edit</a></div>
-    </div>
-  {% else %}
-    <div class="thumb">
-      <div class="m"><span class="err">{{ note }}</span></div>
-    </div>
-  {% endif %}
-{% endmacro %}

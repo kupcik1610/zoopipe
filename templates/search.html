@@ -1,29 +1,67 @@
 {% extends "base.html" %}
 {% from "_macros.html" import result_card %}
 {% block body %}
-  <form method="post" action="/process" class="has-fab">
-    <input type="hidden" name="csv" value="{{ name }}">
-    {% for c in selected %}<input type="hidden" name="col" value="{{ c }}">{% endfor %}
+  <h1>Batch {{ batch_no }} <span class="muted">— rows {{ start + 1 }}–{{ end }} of {{ total }}</span></h1>
+  <p class="lead">Tick the images you want, then Process — they download and the batch is background-removed.</p>
 
-    {% for b in blocks %}
-      {% if b.empty %}
-        <h2 class="latin">(empty query)</h2>
-        <p class="muted">row {{ b.idx }} has no values in {{ selected|join(', ') }}</p>
-      {% elif b.error %}
-        <h2 class="latin">{{ b.query }}</h2>
-        <p class="err">search failed: {{ b.error }}</p>
-      {% else %}
-        <h2><span class="latin">{{ b.query }}</span><span class="count">{{ b.results|length }}</span></h2>
-        {% if b.results %}
-          <div class="grid">
-            {% for res in b.results %}{{ result_card(res, b.idx) }}{% endfor %}
-          </div>
-        {% else %}
-          <p class="muted">no images</p>
-        {% endif %}
-      {% endif %}
-    {% endfor %}
+  <div class="collect-layout">
+    <aside class="sidebar">
+      <div class="side-head">
+        <strong>{{ blocks|selectattr('query')|list|length }} fish</strong>
+        <span id="sel-total" class="sel-total">0 selected</span>
+      </div>
+      <div class="side-actions">
+        <button type="button" id="expand-all" class="mini">expand all</button>
+        <button type="button" id="collapse-all" class="mini">collapse all</button>
+      </div>
+      <ul class="side-list">
+        {% for b in blocks %}
+          {% if b.query and not b.error %}
+            <li data-row="{{ b.idx }}">
+              <a href="#fish-{{ b.idx }}" data-jump="{{ b.idx }}">
+                <span class="side-name latin">{{ b.query }}</span>
+                <span class="side-count" data-count="{{ b.idx }}">0</span>
+              </a>
+            </li>
+          {% endif %}
+        {% endfor %}
+      </ul>
+    </aside>
 
-    <button type="submit" class="process-fab">Process picked images</button>
-  </form>
+    <div class="collect-main">
+      <form method="post" action="/process" class="has-fab">
+        <input type="hidden" name="csv" value="{{ name }}">
+        {% for c in selected %}<input type="hidden" name="col" value="{{ c }}">{% endfor %}
+
+        {% for b in blocks %}
+          {% if b.empty %}
+            <p class="muted noteblock">row {{ b.idx + 1 }}: (empty query — no values in {{ selected|join(', ') }})</p>
+          {% elif b.error %}
+            <p class="noteblock"><span class="latin">{{ b.query }}</span> — <span class="err">search failed: {{ b.error }}</span></p>
+          {% else %}
+            <details class="fish" id="fish-{{ b.idx }}" data-idx="{{ b.idx }}" open>
+              <summary>
+                <span class="latin">{{ b.query }}</span>
+                <span class="count">{{ b.results|length }}</span>
+                <span class="sel-badge" data-badge="{{ b.idx }}" hidden>0 picked</span>
+              </summary>
+              {% if b.results %}
+                <div class="grid">
+                  {% for res in b.results %}{{ result_card(res, b.idx) }}{% endfor %}
+                </div>
+              {% else %}
+                <p class="muted">no images</p>
+              {% endif %}
+            </details>
+          {% endif %}
+        {% endfor %}
+
+        <button type="submit" class="process-fab">Process picked images ▸</button>
+      </form>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='collect.js') }}"></script>
 {% endblock %}

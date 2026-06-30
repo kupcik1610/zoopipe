@@ -3,20 +3,41 @@
   <h1>{{ name }}</h1>
   <p class="lead">{{ n_rows }} rows · {{ fields|length }} columns</p>
 
-  <form method="post" action="/search" class="card">
+  {% if progress %}
+    <div class="card resume-card">
+      <strong>Run in progress</strong> — collected {{ progress.cursor }} of {{ progress.total_rows }} rows,
+      {{ progress.done }} plates done{% if progress.error %}, {{ progress.error }} errored{% endif %}.
+      {% if not progress.complete %}
+        <a class="btn" href="/collect?csv={{ name }}">Resume run ▸</a>
+      {% else %}<span class="tag">complete</span>{% endif %}
+      <form method="post" action="/cancel" class="cancel-form"
+            onsubmit="return confirm('Cancel this run? Clears its progress and queue. Already-downloaded images in out/ are kept.')">
+        <input type="hidden" name="csv" value="{{ name }}">
+        <button type="submit" class="cancel-run" title="Forget this run">cancel run</button>
+      </form>
+      <p class="muted small">Saving below updates the config but keeps your place (cursor stays put). Cancel clears progress; files in out/ stay.</p>
+    </div>
+  {% endif %}
+
+  <form method="post" action="/configure" class="card">
     <input type="hidden" name="csv" value="{{ name }}">
     <h2>Search columns</h2>
     <div class="cols">
       {% for c in fields %}
-        <label><input type="checkbox" name="col" value="{{ c }}"> {{ c }}</label>
+        <label><input type="checkbox" name="col" value="{{ c }}"
+          {% if c in selected %}checked{% endif %}> {{ c }}</label>
       {% endfor %}
     </div>
     <div class="field">
       <label>Results per query
-        <input type="number" name="results" value="10" min="1" max="50"></label>
-      <label>Rows to process
-        <input type="number" name="rows" value="5" min="1" max="{{ n_rows or 1 }}"></label>
+        <input type="number" name="results" min="1" max="50"
+               value="{{ run['results'] if run else 20 }}"></label>
+      <label>Batch size (rows per batch)
+        <input type="number" name="batch_size" min="1" max="500"
+               value="{{ run['batch_size'] if run else 25 }}"></label>
     </div>
-    <div class="actions"><button type="submit">Search</button></div>
+    <div class="actions">
+      <button type="submit">{{ 'Save config' if progress else 'Save & collect' }}</button>
+    </div>
   </form>
 {% endblock %}

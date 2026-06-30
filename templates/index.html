@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block body %}
+  <h1>Pick a CSV</h1>
+  <div class="card">
+    <ul>
+      {% for c in csvs %}
+        <li><a href="/configure?csv={{ c }}">{{ c }}</a></li>
+      {% else %}
+        <li class="muted">no .csv files in data/</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endblock %}

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block body %}
+  <h1>{{ name }}</h1>
+  <p class="lead">{{ n_rows }} rows · {{ fields|length }} columns</p>
+
+  <form method="post" action="/search" class="card">
+    <input type="hidden" name="csv" value="{{ name }}">
+    <h2>Search columns</h2>
+    <div class="cols">
+      {% for c in fields %}
+        <label><input type="checkbox" name="col" value="{{ c }}"> {{ c }}</label>
+      {% endfor %}
+    </div>
+    <div class="field">
+      <label>Results per query
+        <input type="number" name="results" value="10" min="1" max="50"></label>
+      <label>Rows to process
+        <input type="number" name="rows" value="5" min="1" max="{{ n_rows or 1 }}"></label>
+    </div>
+    <div class="actions"><button type="submit">Search</button></div>
+  </form>
+{% endblock %}

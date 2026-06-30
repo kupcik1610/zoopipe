@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "_macros.html" import result_card %}
+{% block body %}
+  <form method="post" action="/process" class="has-fab">
+    <input type="hidden" name="csv" value="{{ name }}">
+    {% for c in selected %}<input type="hidden" name="col" value="{{ c }}">{% endfor %}
+
+    {% for b in blocks %}
+      {% if b.empty %}
+        <h2 class="latin">(empty query)</h2>
+        <p class="muted">row {{ b.idx }} has no values in {{ selected|join(', ') }}</p>
+      {% elif b.error %}
+        <h2 class="latin">{{ b.query }}</h2>
+        <p class="err">search failed: {{ b.error }}</p>
+      {% else %}
+        <h2><span class="latin">{{ b.query }}</span><span class="count">{{ b.results|length }}</span></h2>
+        {% if b.results %}
+          <div class="grid">
+            {% for res in b.results %}{{ result_card(res, b.idx) }}{% endfor %}
+          </div>
+        {% else %}
+          <p class="muted">no images</p>
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+
+    <button type="submit" class="process-fab">Process picked images</button>
+  </form>
+{% endblock %}

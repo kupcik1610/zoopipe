@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zoopipe — {{ title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="masthead">
+    <div class="wrap">
+      <h1 class="wordmark"><a href="/">Zoopipe</a></h1>
+      <p class="tagline">a field guide of clean catalogue plates</p>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <nav class="crumb">
+      <a href="/">Data</a>
+      {% for label, href in crumb %}
+        <span class="sep">/</span>
+        {% if href %}<a href="{{ href }}">{{ label }}</a>
+        {% else %}<span class="here">{{ label }}</span>{% endif %}
+      {% endfor %}
+    </nav>
+
+    {% block body %}{% endblock %}
+  </div>
+
+  <dialog id="lightbox" class="lightbox"><img alt=""></dialog>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

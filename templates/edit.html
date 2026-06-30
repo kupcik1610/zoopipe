@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block body %}
+  <h1>Adjust <span class="muted">— {{ rel }}</span></h1>
+
+  {% if saved %}<p class="ok note">Saved.</p>{% endif %}
+  {% if not has_orig %}
+    <p class="err note">No saved original — background removal won't re-run cleanly.</p>
+  {% endif %}
+
+  <div class="card">
+    <div class="editor-pv-wrap">
+      <img id="pv" class="editor-pv" src="/out/{{ rel }}?v={{ saved or 0 }}" alt="">
+    </div>
+
+    <form id="ef" method="post" action="/edit" onsubmit="return doSave(event)">
+      <input type="hidden" name="img" value="{{ rel }}">
+      <p>
+        <label>Rotate <output id="deg">0</output>°
+          <input type="range" name="rotate" id="rot" class="range"
+                 min="-180" max="180" value="0" step="1"
+                 oninput="deg.textContent=this.value;pv.style.transform='rotate('+this.value+'deg)'">
+        </label>
+      </p>
+      <p>
+        <label><input type="checkbox" name="flip"> flip (head faces left)</label>
+        <label><input type="checkbox" name="trim" checked> trim to subject</label>
+      </p>
+      <div class="actions">
+        <button type="submit">Save</button>
+        <button type="button" class="ghost" onclick="history.back()">Cancel</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}

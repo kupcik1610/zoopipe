@@ -14,7 +14,7 @@ Search is synchronous; fine for hand-picked batches.
   .venv/bin/python app.py        # http://127.0.0.1:5001
 """
 import csv, io, os, re, time, urllib.request, urllib.error
-from flask import (Flask, request, render_template_string, abort,
+from flask import (Flask, request, render_template, abort,
                    send_from_directory, redirect)
 from ddgs import DDGS
 
@@ -261,93 +261,19 @@ def original_for(rel):
     return None
 
 
-# ---- templates --------------------------------------------------------------
-BASE = """<!doctype html><meta charset=utf-8><title>zoopipe — {{ title }}</title>
-<style>
- body{font:14px system-ui;margin:24px;background:#f4f4f5;color:#222;max-width:1100px}
- h1{font-size:20px} h2{font-size:15px;color:#555;margin:18px 0 6px}
- a{color:#2563eb;text-decoration:none} a:hover{text-decoration:underline}
- .card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px;margin:12px 0}
- label{display:inline-block;margin:3px 14px 3px 0}
- input[type=number]{width:80px;padding:4px}
- button{background:#2563eb;color:#fff;border:0;border-radius:6px;padding:9px 18px;
-   font-size:14px;cursor:pointer;margin-top:10px}
- .bar{position:sticky;top:0;background:#f4f4f5;padding:10px 0;z-index:5}
- .cols{columns:3;margin:6px 0}
- .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
- .thumb{background:#fff;border:2px solid #e2e2e2;border-radius:6px;overflow:hidden;
-   position:relative}
- .thumb:has(input.pick:checked){border-color:#2563eb;box-shadow:0 0 0 2px #2563eb33}
- .thumb img{width:100%;height:140px;object-fit:contain;background:#fafafa;display:block}
- .thumb .m{padding:6px;font-size:11px;color:#666;word-break:break-all}
- .thumb .t{color:#222;font-weight:600}
- .thumb .pickrow{padding:6px;background:#f8f8f8;border-top:1px solid #eee;font-size:12px}
- .crumb{color:#888;font-size:13px;margin-bottom:12px}
- .err{color:#b91c1c} .ok{color:#15803d} .muted{color:#888}
-</style>
-<div class=crumb><a href="/">data</a>{{ crumb|safe }}</div>
-{{ body|safe }}
-"""
-
-# Refresh edited thumbnails when returning to the processed list: the editor
-# records `{rel: timestamp}` in sessionStorage; this busts the cache for those.
-LIST_JS = """<script>
-addEventListener('pageshow',function(){
-  var e; try{e=JSON.parse(sessionStorage.getItem('edited')||'{}')}catch(_){e={}}
-  document.querySelectorAll('img[data-rel]').forEach(function(i){
-    var r=i.getAttribute('data-rel'); if(e[r]) i.src='/out/'+r+'?v='+e[r];
-  });
-});
-</script>"""
-
-# Editor save: POST via fetch, note the edited image for the list, then go back.
-EDIT_JS = """<script>
-function doSave(e){
-  e.preventDefault();
-  var f=e.target, b=f.querySelector('button[type=submit]');
-  b.disabled=true; b.textContent='Saving…';
-  fetch(f.action,{method:'POST',headers:{'X-Requested-With':'fetch'},body:new FormData(f)})
-    .then(function(r){ if(!r.ok) throw 0;
-      var e2; try{e2=JSON.parse(sessionStorage.getItem('edited')||'{}')}catch(_){e2={}}
-      e2[f.img.value]=Date.now(); sessionStorage.setItem('edited',JSON.stringify(e2));
-      history.back();
-    })
-    .catch(function(){ b.disabled=false; b.textContent='Save'; alert('Save failed'); });
-  return false;
-}
-</script>"""
-
-
 @app.get("/")
 def index():
-    csvs = list_csvs()
-    items = "".join(
-        f"<li><a href='/configure?csv={c}'>{c}</a></li>" for c in csvs
-    ) or "<li class=muted>no .csv files in data/</li>"
-    body = f"<h1>Pick a CSV</h1><div class=card><ul>{items}</ul></div>"
-    return render_template_string(BASE, title="pick csv", crumb="", body=body)
+    return render_template("index.html", title="pick csv", crumb=[],
+                           csvs=list_csvs())
 
 
 @app.get("/configure")
 def configure():
     name = request.args.get("csv", "")
     fields, rows = read_csv(name)
-    checks = "".join(
-        f"<label><input type=checkbox name=col value='{c}'> {c}</label>"
-        for c in fields
-    )
-    body = f"""<h1>{name}</h1>
-    <p class=muted>{len(rows)} rows · {len(fields)} columns</p>
-    <form method=post action="/search" class=card>
-      <input type=hidden name=csv value="{name}">
-      <h2>Search columns</h2>
-      <div class=cols>{checks}</div>
-      <label>Results per query <input type=number name=results value=10 min=1 max=50></label>
-      <label>Rows to process <input type=number name=rows value=5 min=1 max={len(rows) or 1}></label>
-      <button type=submit>Search</button>
-    </form>"""
-    crumb = f" / <a href='/configure?csv={name}'>{name}</a>"
-    return render_template_string(BASE, title=name, crumb=crumb, body=body)
+    crumb = [(name, None)]
+    return render_template("configure.html", title=name, crumb=crumb,
+                           name=name, fields=fields, n_rows=len(rows))
 
 
 @app.post("/search")
@@ -359,52 +285,26 @@ def search():
     n_rows = max(1, min(len(rows), request.form.get("rows", 5, type=int) or 5))
 
     if not selected:
-        body = "<h1>No columns selected</h1><p class=err>Pick at least one column.</p>"
-        return render_template_string(BASE, title="error", crumb="", body=body)
-
-    # carry the search config through to /process as hidden fields
-    hidden = (f"<input type=hidden name=csv value='{name}'>"
-              + "".join(f"<input type=hidden name=col value='{c}'>" for c in selected))
+        return render_template("message.html", title="error", crumb=[],
+                               heading="No columns selected",
+                               message="Pick at least one column.")
 
     blocks = []
     for idx, r in enumerate(rows[:n_rows]):
         query = build_query(r, selected)
         if not query:
-            blocks.append(f"<h2>(empty query)</h2><p class=muted>row {idx} has no values "
-                          f"in {', '.join(selected)}</p>")
+            blocks.append({"idx": idx, "empty": True})
             continue
         try:
             results = raw_image_search(query, n_results)
         except Exception as e:
-            blocks.append(f"<h2>{query}</h2><p class=err>search failed: "
-                          f"{type(e).__name__}: {e}</p>")
+            blocks.append({"query": query, "error": f"{type(e).__name__}: {e}"})
             continue
-        kept = by_size(results)
-        cards = "".join(
-            f"""<div class=thumb>
-              <a href="{res.get('image','')}" target=_blank>
-                <img src="{res.get('thumbnail') or res.get('image','')}" loading=lazy></a>
-              <div class=m>
-                <div class=t>{(res.get('title') or '')[:80]}</div>
-                {res.get('width','?')}×{res.get('height','?')} · {res.get('source','')}<br>
-                <a href="{res.get('url','')}" target=_blank>source page</a>
-              </div>
-              <div class=pickrow>
-                <label><input class=pick type=checkbox name=pick
-                   value="{idx}|||{res.get('image','')}"> pick</label>
-              </div></div>""" for res in kept
-        ) or f"<p class=muted>no images</p>"
-        blocks.append(f"<h2>{query} <span class=muted>· {len(kept)}</span></h2>"
-                      f"<div class=grid>{cards}</div>")
+        blocks.append({"idx": idx, "query": query, "results": by_size(results)})
 
-    body = (f"""<form method=post action="/process">{hidden}
-      <div class=bar><button type=submit>Process picked images</button></div>
-      <h1>Results</h1>
-      {''.join(blocks)}
-      <div class=bar><button type=submit>Process picked images</button></div>
-    </form>""")
-    crumb = f" / <a href='/configure?csv={name}'>{name}</a> / results"
-    return render_template_string(BASE, title="results", crumb=crumb, body=body)
+    crumb = [(name, f"/configure?csv={name}"), ("results", None)]
+    return render_template("search.html", title="results", crumb=crumb,
+                           name=name, selected=selected, blocks=blocks)
 
 
 @app.post("/process")
@@ -417,8 +317,9 @@ def process_picks():
     picks = request.form.getlist("pick")
 
     if not picks:
-        body = "<h1>Nothing picked</h1><p class=err>Tick at least one image first.</p>"
-        return render_template_string(BASE, title="nothing picked", crumb="", body=body)
+        return render_template("message.html", title="nothing picked", crumb=[],
+                               heading="Nothing picked",
+                               message="Tick at least one image first.")
 
     # group picked image URLs by row index
     by_row = {}
@@ -459,17 +360,10 @@ def process_picks():
             produced.append((f"{slug}/{fn}", ", ".join(notes) or "saved"))
             n += 1
 
-        cards = "".join(
-            (f"<div class=thumb><img src='/out/{rel}' data-rel='{rel}'>"
-             f"<div class=pickrow><a href='/edit?img={rel}'>edit</a></div></div>"
-             if rel else
-             f"<div class=thumb><div class=m><span class=err>{note}</span></div></div>")
-            for rel, note in produced
-        )
-        blocks.append(f"<h2>{query}</h2><div class=grid>{cards}</div>")
+        blocks.append({"query": query, "produced": produced})
 
-    body = f"<h1>Processed</h1>{''.join(blocks)}" + LIST_JS
-    return render_template_string(BASE, title="processed", crumb=" / processed", body=body)
+    return render_template("process.html", title="processed",
+                           crumb=[("processed", None)], blocks=blocks)
 
 
 @app.get("/edit")
@@ -478,28 +372,8 @@ def edit():
     resolve_out(rel)                 # 404s if outside out/ or missing
     saved = request.args.get("saved")
     has_orig = original_for(rel) is not None
-    warn = ("" if has_orig else
-            "<p class=err>No saved original — background removal won't re-run cleanly.</p>")
-    msg = "<p class=ok>Saved.</p>" if saved else ""
-    body = f"""<h1>Adjust — {rel}</h1>{msg}{warn}
-    <div class=card>
-      <img id=pv src="/out/{rel}?v={saved or 0}"
-           style="max-width:520px;max-height:460px;background:#fafafa;transition:transform .05s">
-      <form id=ef method=post action="/edit" onsubmit="return doSave(event)">
-        <input type=hidden name=img value="{rel}">
-        <p><label>Rotate <output id=deg>0</output>°<br>
-          <input type=range name=rotate id=rot min=-180 max=180 value=0 step=1
-                 style="width:420px"
-                 oninput="deg.textContent=this.value;pv.style.transform='rotate('+this.value+'deg)'">
-        </label></p>
-        <p><label><input type=checkbox name=flip> flip (head faces left)</label>
-           <label><input type=checkbox name=trim checked> trim to subject</label></p>
-        <button type=submit>Save</button>
-        <button type=button onclick="history.back()"
-                style="background:#e2e2e2;color:#222;margin-left:8px">Cancel</button>
-      </form>
-    </div>""" + EDIT_JS
-    return render_template_string(BASE, title="adjust", crumb=" / adjust", body=body)
+    return render_template("edit.html", title="adjust", crumb=[("adjust", None)],
+                           rel=rel, saved=saved, has_orig=has_orig)
 
 
 @app.post("/edit")

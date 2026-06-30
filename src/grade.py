@@ -59,10 +59,14 @@ def quality_score(v):
     if v.get("has_watermark_or_text") is True:  return 0.0
     if v.get("single_subject") is False:        return 0.0   # bad for a clean cutout
     if v.get("side_profile") is False:          return 0.0   # catalog needs lateral view
+    if v.get("whole_body_visible") is False:    return 0.0   # cropped = unusable
     if v.get("matches_species") == "no":        return 0.0
     s = float(v.get("score", 0.5) or 0.5)
-    if v.get("matches_species") == "yes":       s += 0.30
+    if v.get("matches_species") == "yes":       s += 0.25
     elif v.get("matches_species") == "likely":  s += 0.10
-    if v.get("background_clean"):               s += 0.10    # minor bonus; bg is removed anyway
-    if v.get("blurry"):                         s -= 0.40
+    if v.get("centered"):                       s += 0.10
+    if v.get("background_separable"):           s += 0.20    # key for the rembg cutout
+    sharp = (v.get("sharpness") or "").lower()
+    if sharp == "high":                         s += 0.20
+    elif sharp == "low":                        s -= 0.30
     return max(0.0, min(2.0, s))

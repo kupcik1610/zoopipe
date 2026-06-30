@@ -1,4 +1,4 @@
-"""Candidate-image finder: Google Programmable Search (image search).
+"""Candidate-image finder: DuckDuckGo image search.
 
 Returns candidate dicts: {url, source, attribution, page}
   - url:  direct image URL
@@ -7,8 +7,7 @@ Licensing is NOT decided here -- every candidate's source page is checked by
 Gemini in license_check.py before the image is allowed into the catalog.
 """
 import re
-from . import config
-from .http import get_json
+from ddgs import DDGS
 
 def _clean(name):
     """Strip trade/morph/size suffixes so we search the actual species.
@@ -19,28 +18,28 @@ def _clean(name):
     return " ".join(parts[:2]) if len(parts) >= 2 else n   # Genus species
 
 
-def google_cse(latin, want=8):
-    if not config.search_enabled():
-        return []
+def ddg_images(latin, want=25):
+    """DuckDuckGo image search -- no API key, no quota.
+    License is decided downstream by the source-page check, so we don't
+    filter here."""
+    query = f"{_clean(latin)} fish"
     out = []
     try:
-        d = get_json("https://www.googleapis.com/customsearch/v1", {
-            "key": config.GCSE_KEY, "cx": config.GCSE_CX, "searchType": "image",
-            "q": f"{_clean(latin)} fish", "imgType": "photo", "num": min(want, 10),
-            "rights": "cc_publicdomain,cc_attribute,cc_sharealike",
-        })
+        with DDGS() as ddgs:
+            for r in ddgs.images(query, max_results=want):
+                out.append({
+                    "url": r.get("image"),          # direct image URL
+                    "source": "ddg",
+                    "attribution": r.get("source", ""),
+                    "page": r.get("url", ""),        # page the image lives on
+                })
     except Exception:
-        return out
-    for it in d.get("items", []):
-        img = it.get("image") or {}
-        out.append({"url": it.get("link"), "source": "google_cse",
-                    "attribution": it.get("displayLink", ""),
-                    "page": img.get("contextLink", "")})
-    return out
+        pass
+    return out[:want]
 
 
-def find_candidates(latin):
-    cands = google_cse(latin)
+def find_candidates(latin, want=25):
+    cands = ddg_images(latin, want=want)
     seen, uniq = set(), []
     for c in cands:
         if c["url"] and c["url"] not in seen:

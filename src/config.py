@@ -1,9 +1,9 @@
 """Central config + the prompts Gemini runs against.
 
 Secrets are read from environment variables (or a .env file next to run.py).
-The pipeline finds candidates via Google Custom Search, then uses Gemini twice:
-once to verify the image is free to use (by reading its source page), and once
-to grade the image quality. Both need an AI backend (Vertex or a Gemini key).
+The pipeline finds candidates via DuckDuckGo image search, then uses Gemini
+twice: once to verify the image is free to use (by reading its source page), and
+once to grade the image quality. Both need an AI backend (Vertex or a Gemini key).
 """
 import os
 
@@ -30,24 +30,18 @@ GCP_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 # Gemini Developer API key (AI Studio) -- alternative to Vertex.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# ---- Google Programmable Search (the image source) --------------------------
-GCSE_KEY = os.environ.get("GCSE_KEY", "")
-GCSE_CX  = os.environ.get("GCSE_CX", "")
-
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 IMAGEN_MODEL = os.environ.get("IMAGEN_MODEL", "imagen-3.0-generate-002")
 
 def ai_enabled():
     return bool((USE_VERTEX and GCP_PROJECT) or GEMINI_API_KEY)
 
-def search_enabled():
-    return bool(GCSE_KEY and GCSE_CX)
-
 # ---- the image we want ------------------------------------------------------
 SPEC = (
-    "a clear SIDE-PROFILE photo of ONE single whole fish/animal, the entire body "
-    "visible, sharp focus, suitable for a clean product catalog. (Background and "
-    "facing direction don't matter -- we remove the background and flip to face left.)"
+    "a clean catalog photo of ONE whole fish/animal in SHARP focus, shown from the "
+    "side, CENTERED with space around it, standing out clearly from its background so "
+    "it is EASY TO CUT OUT automatically. (We remove the background and flip it to "
+    "face left, so background colour and facing direction themselves don't matter.)"
 )
 
 # Prompt 1: verify the image is FREE TO USE, by reading its source web page.
@@ -72,22 +66,27 @@ Return ONLY a compact JSON object:
 - "reason": ONE short sentence explaining the decision, quoting the licensing evidence you saw on the page
 """
 
-# Prompt 2: grade the image quality for the catalog. Must return strict JSON.
+# Prompt 2: grade the image quality + post-processing fitness. Strict JSON.
 GRADE_PROMPT = """You grade a candidate image for an aquarium-shop product catalog.
+The chosen image will be AUTO-PROCESSED: software removes its background, then flips
+it so the head faces left. So judge both catalog quality AND how easy it is to edit.
+
 Target species (scientific name): "{latin}"  (common/local name: "{sk}").
 We need: {spec}
 
-Look at the image and answer ONLY with a compact JSON object, no markdown, with keys:
-- "is_photo": true ONLY if it is a real photograph (NOT a drawing, painting, engraving, sketch, diagram, map, or scientific illustration)
-- "is_animal": true if it clearly shows a live fish/aquatic animal (not a logo, person, plant-only, multiple-photo collage)
-- "has_watermark_or_text": true if there is ANY overlaid text, signature, logo, copyright/credit mark, date stamp, URL, or visible border/frame anywhere in the image
+Answer ONLY with a compact JSON object, no markdown, with keys:
+- "is_photo": true ONLY if a real photograph (NOT a drawing, painting, 3D render, diagram, or illustration)
+- "is_animal": true if it clearly shows a live fish/aquatic animal (not a logo, person, plant-only, or multi-photo collage)
 - "matches_species": one of "yes","likely","unsure","no" - does it plausibly show the target species
-- "single_subject": true if exactly one animal is the clear subject
-- "side_profile": true if shown from the side (lateral), not top/front/3-4 view
+- "single_subject": true if exactly ONE animal is the clear subject
+- "whole_body_visible": true if the entire animal is in frame, not cropped at the edges
+- "side_profile": true if a lateral side view (not top/front/three-quarter view)
 - "facing": "left", "right", or "other" - which way the head points
-- "background_clean": true if background is plain/simple (easy to cut out)
-- "blurry": true if out of focus or very low quality
-- "score": number 0.0-1.0 overall quality for our purpose
+- "centered": true if the animal is roughly centered with margin around it
+- "sharpness": "high", "medium", or "low" - how crisp/in-focus the animal is
+- "background_separable": true if the animal stands out clearly from the background so AUTOMATIC background removal will work cleanly (good edge contrast; NOT camouflaged or blended into similar colours/clutter)
+- "has_watermark_or_text": true if ANY overlaid text, signature, logo, copyright/credit mark, URL, date stamp, or visible border/frame
+- "score": number 0.0-1.0 overall fit for a clean, easily-editable catalog image
 Return only the JSON."""
 
 # Prompt for Imagen gap-fill generation.

@@ -88,10 +88,19 @@ def slugify(s):
 
 
 # ---- search -----------------------------------------------------------------
-def raw_image_search(query, max_results):
-    """DuckDuckGo image search, restricted to 'Large' so we get big photos."""
-    with DDGS() as ddgs:
-        return list(ddgs.images(query, size="Large", max_results=max_results))
+def raw_image_search(query, max_results, retries=2):
+    """DuckDuckGo image search, restricted to 'Large' so we get big photos.
+    DDG is flaky under back-to-back queries, so retry with backoff and a
+    roomier timeout than the 5s default."""
+    last = None
+    for attempt in range(retries + 1):
+        try:
+            with DDGS(timeout=20) as ddgs:
+                return list(ddgs.images(query, size="Large", max_results=max_results))
+        except Exception as e:
+            last = e
+            time.sleep(1.5 * (attempt + 1))
+    raise last
 
 
 def _int(v):
@@ -237,6 +246,31 @@ def collect():
     )
 
 
+@app.get("/research")
+def research():
+    """Re-run the DDG search for a single row -> rendered fish block (for the
+    per-fish 'retry search' button, so one timeout doesn't cost the batch)."""
+    name = request.args.get("csv", "")
+    idx = request.args.get("idx", type=int)
+    run = db.get_run(name)
+    if not run or idx is None:
+        abort(404)
+    fields, rows = read_csv(name)
+    if idx < 0 or idx >= len(rows):
+        abort(404)
+    cols = [c for c in json.loads(run["cols"]) if c in fields]
+    query = build_query(rows[idx], cols)
+    if not query:
+        block = {"idx": idx, "empty": True}
+    else:
+        try:
+            block = {"idx": idx, "query": query,
+                     "results": by_size(raw_image_search(query, run["results"]))}
+        except Exception as e:
+            block = {"idx": idx, "query": query, "error": f"{type(e).__name__}: {e}"}
+    return render_template("_fishblock.html", b=block, selected=cols)
+
+
 @app.post("/process")
 def process_picks():
     name = request.form.get("csv", "")
@@ -375,12 +409,12 @@ def edit_save():
     dest = resolve_out(rel)
     angle = max(-180, min(180, request.form.get("rotate", 0, type=int) or 0))
     do_flip = bool(request.form.get("flip"))
-    do_trim = bool(request.form.get("trim"))
 
-    # pure geometry on the finished plate -- no background removal / rembg
+    # pure geometry on the finished plate -- no background removal / rembg.
+    # always trim+centre so the fish stays properly framed in the box.
     with open(dest, "rb") as f:
         raw = f.read()
-    out, _, _ = imaging.retouch(raw, flip=do_flip, rotate=angle, trim=do_trim)
+    out, _, _ = imaging.retouch(raw, flip=do_flip, rotate=angle, trim=True)
     with open(dest, "wb") as f:
         f.write(out)
     if request.headers.get("X-Requested-With") == "fetch":

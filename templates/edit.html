@@ -11,21 +11,41 @@
 
     <form id="ef" method="post" action="/edit" onsubmit="return doSave(event)">
       <input type="hidden" name="img" value="{{ rel }}">
-      <p>
-        <label>Rotate <output id="deg">0</output>°
+      <input type="hidden" name="flip" id="flip" value="">
+      <div class="editor-controls">
+        <label class="rotctl">Rotate <output id="deg">0</output>°
           <input type="range" name="rotate" id="rot" class="range"
-                 min="-180" max="180" value="0" step="1"
-                 oninput="deg.textContent=this.value;pv.style.transform='rotate('+this.value+'deg)'">
+                 min="-180" max="180" value="0" step="1">
         </label>
-      </p>
-      <p>
-        <label><input type="checkbox" name="flip"> flip (head faces left)</label>
-        <label><input type="checkbox" name="trim" checked> trim to subject</label>
-      </p>
+        <button type="button" id="mirrorBtn" class="ghost toggle" aria-pressed="false">⇋ Mirror</button>
+      </div>
+      <p class="muted small">The fish is always re-centred in the frame on save.</p>
       <div class="actions">
         <button type="submit">Save</button>
         <button type="button" class="ghost" onclick="history.back()">Cancel</button>
       </div>
     </form>
   </div>
+
+  <script>
+    (function () {
+      var pv = document.getElementById('pv'), rot = document.getElementById('rot'),
+          deg = document.getElementById('deg'), flip = document.getElementById('flip'),
+          mb = document.getElementById('mirrorBtn');
+      function apply() {
+        deg.textContent = rot.value;
+        // rotate first, then mirror -> matches the worker's rotate-then-flip
+        pv.style.transform = (flip.value === '1' ? 'scaleX(-1) ' : '') + 'rotate(' + rot.value + 'deg)';
+      }
+      rot.addEventListener('input', apply);
+      mb.addEventListener('click', function () {
+        flip.value = flip.value === '1' ? '' : '1';
+        var on = flip.value === '1';
+        mb.classList.toggle('on', on);
+        mb.setAttribute('aria-pressed', on ? 'true' : 'false');
+        apply();
+      });
+      apply();
+    })();
+  </script>
 {% endblock %}

@@ -4,6 +4,7 @@
 (function () {
   var layout = document.querySelector('.collect-layout');
   if (!layout) return;
+  var csv = layout.getAttribute('data-csv');
 
   function recount() {
     var total = 0;
@@ -48,6 +49,25 @@
     if (!d) return;
     d.open = !d.open;
     if (d.open) d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  // retry the search for a single fish (a DDG timeout shouldn't cost the batch)
+  document.addEventListener('click', function (e) {
+    var rb = e.target.closest('button.research');
+    if (!rb) return;
+    e.preventDefault(); e.stopPropagation();   // don't toggle the <details>
+    var idx = rb.getAttribute('data-idx');
+    var block = document.getElementById('fish-' + idx);
+    rb.disabled = true; rb.textContent = 'searching…';
+    fetch('/research?csv=' + encodeURIComponent(csv) + '&idx=' + idx)
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        var tmp = document.createElement('div');
+        tmp.innerHTML = html.trim();
+        var fresh = tmp.firstElementChild;
+        if (fresh && block) { block.replaceWith(fresh); recount(); }
+      })
+      .catch(function () { rb.disabled = false; rb.textContent = '↻ retry search'; });
   });
 
   function setAll(open) {

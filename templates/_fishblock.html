@@ -1,0 +1,25 @@
+{# One collapsible fish block: results grid, or a retryable error/empty note.
+   Rendered both in the collect page loop and standalone by /research (retry). #}
+{% from "_macros.html" import result_card %}
+{% if b.empty %}
+  <p class="muted noteblock" id="fish-{{ b.idx }}">row {{ b.idx + 1 }}: (empty query — no values in {{ selected|join(', ') }})</p>
+{% else %}
+  <details class="fish" id="fish-{{ b.idx }}" data-idx="{{ b.idx }}" open>
+    <summary>
+      <span class="latin">{{ b.query }}</span>
+      {% if b.error %}<span class="count err">failed</span>
+      {% else %}<span class="count">{{ b.results|length }}</span>{% endif %}
+      <span class="sel-badge" data-badge="{{ b.idx }}" hidden>0 picked</span>
+      <button type="button" class="research" data-idx="{{ b.idx }}">↻ retry search</button>
+    </summary>
+    {% if b.error %}
+      <p class="err">search failed: {{ b.error }}</p>
+    {% elif b.results %}
+      <div class="grid">
+        {% for res in b.results %}{{ result_card(res, b.idx) }}{% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">no images</p>
+    {% endif %}
+  </details>
+{% endif %}

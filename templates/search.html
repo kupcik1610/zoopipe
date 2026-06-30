@@ -4,7 +4,7 @@
   <h1>Batch {{ batch_no }} <span class="muted">— rows {{ start + 1 }}–{{ end }} of {{ total }}</span></h1>
   <p class="lead">Tick the images you want, then Process — they download and the batch is background-removed.</p>
 
-  <div class="collect-layout">
+  <div class="collect-layout" data-csv="{{ name }}">
     <aside class="sidebar">
       <div class="side-head">
         <strong>{{ blocks|selectattr('query')|list|length }} fish</strong>
@@ -16,11 +16,12 @@
       </div>
       <ul class="side-list">
         {% for b in blocks %}
-          {% if b.query and not b.error %}
+          {% if b.query %}
             <li data-row="{{ b.idx }}">
               <a href="#fish-{{ b.idx }}" data-jump="{{ b.idx }}">
                 <span class="side-name latin">{{ b.query }}</span>
-                <span class="side-count" data-count="{{ b.idx }}">0</span>
+                {% if b.error %}<span class="side-count err" data-count="{{ b.idx }}" title="search failed">!</span>
+                {% else %}<span class="side-count" data-count="{{ b.idx }}">0</span>{% endif %}
               </a>
             </li>
           {% endif %}
@@ -33,28 +34,7 @@
         <input type="hidden" name="csv" value="{{ name }}">
         {% for c in selected %}<input type="hidden" name="col" value="{{ c }}">{% endfor %}
 
-        {% for b in blocks %}
-          {% if b.empty %}
-            <p class="muted noteblock">row {{ b.idx + 1 }}: (empty query — no values in {{ selected|join(', ') }})</p>
-          {% elif b.error %}
-            <p class="noteblock"><span class="latin">{{ b.query }}</span> — <span class="err">search failed: {{ b.error }}</span></p>
-          {% else %}
-            <details class="fish" id="fish-{{ b.idx }}" data-idx="{{ b.idx }}" open>
-              <summary>
-                <span class="latin">{{ b.query }}</span>
-                <span class="count">{{ b.results|length }}</span>
-                <span class="sel-badge" data-badge="{{ b.idx }}" hidden>0 picked</span>
-              </summary>
-              {% if b.results %}
-                <div class="grid">
-                  {% for res in b.results %}{{ result_card(res, b.idx) }}{% endfor %}
-                </div>
-              {% else %}
-                <p class="muted">no images</p>
-              {% endif %}
-            </details>
-          {% endif %}
-        {% endfor %}
+        {% for b in blocks %}{% include "_fishblock.html" %}{% endfor %}
 
         <button type="submit" class="process-fab">Process picked images ▸</button>
       </form>

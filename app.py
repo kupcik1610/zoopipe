@@ -20,7 +20,7 @@ urllib; image processing via imaging.py (rembg birefnet + Pillow).
 """
 import csv, os, re, sys, time, json, subprocess, urllib.request, urllib.error
 from flask import (Flask, request, render_template, abort,
-                   send_from_directory, redirect, jsonify)
+                   send_from_directory, redirect, jsonify, Response)
 from ddgs import DDGS
 
 import db
@@ -32,6 +32,30 @@ OUT_DIR = os.path.join(BASE_DIR, "out")
 
 app = Flask(__name__)
 db.init()
+
+
+# ---- optional secret-link gate ----------------------------------------------
+# Set APP_KEY in the environment to lock the app behind a secret link (used when
+# it's exposed on a server). Unset -> no gate, so local use is unchanged.
+#   * she opens  https://host/?key=SECRET  once -> we drop a cookie and redirect
+#     to a clean URL, so she stays logged in with nothing to type or remember.
+#   * anyone without the cookie or the key just gets a 404 (the app is invisible).
+APP_KEY = os.environ.get("APP_KEY")
+_COOKIE = "zoopipe_key"
+
+
+@app.before_request
+def _require_key():
+    if not APP_KEY:
+        return
+    if request.cookies.get(_COOKIE) == APP_KEY:
+        return                                   # already logged in
+    if request.args.get("key") == APP_KEY:       # the secret link -> set cookie
+        resp = redirect(request.path)
+        resp.set_cookie(_COOKIE, APP_KEY, max_age=31536000,
+                        httponly=True, samesite="Lax", secure=True)
+        return resp
+    return Response("Not found.", 404)
 
 
 # ---- download (stdlib HTTP) -------------------------------------------------

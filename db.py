@@ -163,18 +163,33 @@ def next_n(csv, slug):
     return max(db_max, disk_max) + 1
 
 
-def add_job(csv, batch, row_index, slug, query, n, source_url, orig_path):
+def add_job(csv, batch, row_index, slug, query, n, source_url, orig_path,
+            status="ready", notes=""):
+    """Queue a job. Normally status='ready'; pass status='error' (with a note)
+    to record a pick whose download failed -- it shows on the progress table and
+    the worker re-downloads it from source_url on retry."""
     now = _now()
     with _db() as con:
         cur = con.execute(
             """
             INSERT INTO jobs (csv, batch, row_index, slug, query, n, source_url,
                               orig_path, status, notes, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?, 'ready', '', ?, ?)
+            VALUES (?,?,?,?,?,?,?,?, ?, ?, ?, ?)
             """,
-            (csv, batch, row_index, slug, query, n, source_url, orig_path, now, now),
+            (csv, batch, row_index, slug, query, n, source_url, orig_path,
+             status, notes, now, now),
         )
         return cur.lastrowid
+
+
+def set_orig_path(jid, orig_path):
+    """Record where a job's original landed -- used when the worker (re)downloads
+    a job whose original was missing (a retried download failure)."""
+    with _db() as con:
+        con.execute(
+            "UPDATE jobs SET orig_path=?, updated_at=? WHERE id=?",
+            (orig_path, _now(), jid),
+        )
 
 
 def claim_job():

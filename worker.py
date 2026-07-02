@@ -32,13 +32,34 @@ within a second (spawn_worker no-ops while the supervisor holds the lock).
 Only one supervisor runs at a time (a pid lockfile self-guards). Safe to kill:
 on the next start any half-done 'processing' job is reset back to 'ready'.
 """
-import os, sys, time, subprocess
+import os, sys, time, subprocess, urllib.request, urllib.error
 
 import db
 import imaging
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(BASE_DIR, "out")
+
+# same UA as the web download path; used to (re)fetch a job's original when it's
+# missing -- i.e. when a pick whose download failed is retried.
+_UA = "ryby-fish-catalog/1.0 (contact: kupco.patrik.16@gmail.com)"
+
+
+def _download(url, timeout=30, retries=2):
+    last = None
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": _UA})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            last = f"HTTP {e.code}"
+            if e.code in (400, 401, 403, 404):
+                break            # not worth retrying
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+        time.sleep(0.8 * (attempt + 1))
+    raise RuntimeError(last or "download failed")
 
 CONCURRENCY = max(1, int(os.environ.get("WORKER_CONCURRENCY", "1") or 1))
 THREADS = max(1, int(os.environ.get("WORKER_THREADS", "8") or 8))
@@ -53,9 +74,25 @@ def log(msg, tag="pool"):
 def process_one(job):
     """Turn one job's original into its frame.
     Returns (status, notes, secs, frame_rel) -- frame_rel is None unless done."""
-    src = os.path.join(OUT_DIR, job["orig_path"])
-    if not os.path.isfile(src):
-        return "error", f"original missing: {job['orig_path']}", None, None
+    src_rel = job["orig_path"]
+    src = os.path.join(OUT_DIR, src_rel) if src_rel else None
+    if not src or not os.path.isfile(src):
+        # original never landed (a download that failed at collect time, now
+        # being retried) -> re-fetch it from the stored source_url.
+        if not job["source_url"]:
+            return "error", f"original missing: {src_rel}", None, None
+        try:
+            raw = _download(job["source_url"])
+            if not imaging.is_image(raw):
+                return "error", "download: not an image", None, None
+        except Exception as e:
+            return "error", f"download failed: {type(e).__name__}", None, None
+        src_rel = f"{job['slug']}/originals/{job['n']}.{imaging._ext(raw)}"
+        src = os.path.join(OUT_DIR, src_rel)
+        os.makedirs(os.path.dirname(src), exist_ok=True)
+        with open(src, "wb") as f:
+            f.write(raw)
+        db.set_orig_path(job["id"], src_rel)
     try:
         with open(src, "rb") as f:
             raw = f.read()

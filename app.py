@@ -386,13 +386,22 @@ def process_picks():
         orig_dir = os.path.join(OUT_DIR, slug, "originals")
         os.makedirs(orig_dir, exist_ok=True)
         for url in urls:
+            n = db.next_n(name, slug)
+            note = None
             try:
                 raw = get_bytes(url)
-            except Exception:
+            except Exception as e:
+                note = f"download failed: {type(e).__name__}"
+            else:
+                if not imaging.is_image(raw):
+                    note = "download: not an image"
+            if note:
+                # don't silently drop a failed pick -- record it as an error job
+                # so it shows on the progress table and can be retried (the worker
+                # re-downloads from source_url).
+                db.add_job(name, batch, int(ridx), slug, query, n, url, "",
+                           status="error", notes=note)
                 continue
-            if not imaging.is_image(raw):
-                continue
-            n = db.next_n(name, slug)
             ext = imaging._ext(raw)
             orig_rel = f"{slug}/originals/{n}.{ext}"
             with open(os.path.join(OUT_DIR, orig_rel), "wb") as f:

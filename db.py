@@ -19,6 +19,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(BASE_DIR, "out")
 DB_PATH = os.path.join(OUT_DIR, "jobs.sqlite")
 LOCK_PATH = os.path.join(OUT_DIR, "worker.lock")
+STATE_DIR = os.path.join(OUT_DIR, "worker_state")     # per-worker phase, for the UI
 
 STATUSES = ("ready", "processing", "done", "error")
 
@@ -310,3 +311,47 @@ def release_lock():
         os.remove(LOCK_PATH)
     except OSError:
         pass
+    _clear_worker_state()
+
+
+# ---- worker phase (surfaced on the progress page) ---------------------------
+# Each worker in the pool reports what it's doing (one small file per worker) so
+# the UI can say "loading model…" instead of looking hung during the ~10-40s
+# birefnet warm-up, and show how many workers are busy.
+def set_worker_phase(idx, phase):
+    """Record one pool worker's phase: 'warming' | 'running' | 'idle' | 'done'."""
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(os.path.join(STATE_DIR, f"{idx}.state"), "w") as f:
+            f.write(phase)
+    except OSError:
+        pass
+
+
+def _clear_worker_state():
+    try:
+        for f in os.listdir(STATE_DIR):
+            os.remove(os.path.join(STATE_DIR, f))
+    except OSError:
+        pass
+
+
+def worker_phase():
+    """Aggregate pool status for the UI, or None if no supervisor is running.
+
+    Returns {'phase': dominant, 'warming': n, 'running': n, 'idle': n, 'workers': n}
+    where `phase` is the most 'active' state present (warming > running > idle)."""
+    if not worker_running():
+        return None
+    phases = []
+    try:
+        for f in os.listdir(STATE_DIR):
+            if f.endswith(".state"):
+                with open(os.path.join(STATE_DIR, f)) as fh:
+                    phases.append(fh.read().strip() or "running")
+    except OSError:
+        pass
+    counts = {p: phases.count(p) for p in ("warming", "running", "idle")}
+    dominant = ("warming" if counts["warming"] else
+                "running" if counts["running"] else "idle")
+    return {"phase": dominant, "workers": len(phases), **counts}

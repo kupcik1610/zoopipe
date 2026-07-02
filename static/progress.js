@@ -54,7 +54,18 @@
     if (d.active) {
       // active queue but no live worker -> it died/never started; offer resume
       var stalled = !d.worker_running;
-      state.textContent = stalled ? 'paused — worker not running' : 'processing…';
+      var wp = d.worker_phase;
+      var msg;
+      if (stalled) {
+        msg = 'paused — worker not running';
+      } else if (wp && wp.phase === 'warming') {
+        msg = 'loading model… (first plates start in a few seconds)';
+      } else if (wp && wp.workers > 1) {
+        msg = 'processing… (' + wp.workers + ' workers)';
+      } else {
+        msg = 'processing…';
+      }
+      state.textContent = msg;
       if (resumeBtn) resumeBtn.hidden = !stalled;
     } else {
       state.textContent = c.error ? ('complete · ' + c.error + ' need a retry') : 'complete ✓';

@@ -60,6 +60,8 @@ Environment=PORT=5001
 Environment=OPEN_BROWSER=0
 Environment=U2NET_HOME=$APP_HOME/models
 Environment=APP_KEY=$APP_KEY
+Environment=WORKER_CONCURRENCY=8
+Environment=WORKER_THREADS=8
 ExecStart=$APP_HOME/venv/bin/python $APP_HOME/app/run_server.py
 Restart=always
 RestartSec=3

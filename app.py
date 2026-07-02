@@ -384,6 +384,7 @@ def status():
     return jsonify({
         "counts": c,
         "worker_running": db.worker_running(),
+        "worker_phase": db.worker_phase(),
         "active": c["ready"] > 0 or c["processing"] > 0,
         "jobs": [{
             "id": j["id"], "slug": j["slug"], "n": j["n"],

@@ -18,6 +18,12 @@ _AM = dict(
     alpha_matting_background_threshold=20,
     alpha_matting_erode_size=11,
 )
+# Edge smoothing: feather the cut-out's alpha so stair-stepped edges anti-alias
+# into the white plate instead of looking jagged. EDGE_ERODE pulls the edge in a
+# couple px (eats the leftover background fringe), EDGE_FEATHER softly blurs the
+# mask. Runs at full cut-out resolution, before the down-scale, for clean edges.
+EDGE_ERODE = 2        # px pulled inward off the subject edge
+EDGE_FEATHER = 1.5    # gaussian blur radius applied to the alpha mask
 CANVAS = (600, 470)            # final plate size; subject fitted, rest padded white
 
 # Pillow + rembg are OPTIONAL: without them callers fall back to saving raw.
@@ -46,14 +52,33 @@ def session():
 
 
 def _cut_out(image_bytes):
-    """Run the bg-removal recipe -> transparent RGBA cut-out bytes (PNG)."""
+    """Run the bg-removal recipe -> transparent RGBA cut-out image (smoothed)."""
     kw = {"session": session()}
     if USE_ALPHA_MATTING:
         kw["alpha_matting"] = True
         kw.update(_AM)
     if POST_PROCESS_MASK:
         kw["post_process_mask"] = True
-    return _rembg_remove(image_bytes, **kw)
+    cut = _rembg_remove(image_bytes, **kw)
+    return _smooth_alpha(Image.open(io.BytesIO(cut)).convert("RGBA"))
+
+
+def _smooth_alpha(img):
+    """Anti-alias the cut-out edge so it sits cleanly on the white plate.
+
+    rembg's mask has near-binary, stair-stepped edges. We erode the alpha a
+    couple px to eat the background fringe left around the subject, then apply a
+    small gaussian blur so the remaining edge fades smoothly instead of jagged.
+    Done at full resolution before any down-scale for the softest result.
+    """
+    from PIL import ImageFilter
+    a = img.getchannel("A")
+    if EDGE_ERODE > 0:
+        a = a.filter(ImageFilter.MinFilter(EDGE_ERODE * 2 + 1))
+    if EDGE_FEATHER > 0:
+        a = a.filter(ImageFilter.GaussianBlur(EDGE_FEATHER))
+    img.putalpha(a)
+    return img
 
 
 # ---- image processing: cut out -> fit on white canvas -> flip ---------------
@@ -81,8 +106,7 @@ def normalize(image_bytes, flip=False, rotate=0, trim=False):
     has_alpha = False
     if HAVE_REMBG:
         try:
-            cut = _cut_out(image_bytes)
-            img = Image.open(io.BytesIO(cut)).convert("RGBA")
+            img = _cut_out(image_bytes)
             has_alpha = True
             notes.append(f"bg-removed:{REMBG_MODEL}")
         except Exception as e:

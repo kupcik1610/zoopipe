@@ -15,15 +15,22 @@
         <span class="err">⚠ <b>{{ counts.error }}</b> error</span>
       </div>
       <div class="sumactions" id="sum-actions" hidden>
+        {% set is_last = progress and progress.total_rows and progress.cursor >= progress.total_rows and batch == progress.batch_seq %}
         {% if confirmed %}
           <span class="tag">confirmed</span>
-          <a class="btn" href="/collect?csv={{ name }}">Collect next batch ▸</a>
+          {% if is_last %}
+            <a class="btn" href="/">Run complete — back to CSVs ▸</a>
+          {% else %}
+            <a class="btn" href="/collect?csv={{ name }}">Collect next batch ▸</a>
+          {% endif %}
         {% else %}
           <p class="muted small" id="confirm-hint">Review &amp; edit the plates below, then confirm.</p>
           <form method="post" action="/confirm" class="confirm-form">
             <input type="hidden" name="csv" value="{{ name }}">
             <input type="hidden" name="batch" value="{{ batch }}">
-            <button type="submit" id="confirm-btn">Confirm batch done — collect next ▸</button>
+            <button type="submit" id="confirm-btn">
+              {% if is_last %}Confirm final batch — run done ✓{% else %}Confirm batch done — collect next ▸{% endif %}
+            </button>
           </form>
         {% endif %}
       </div>

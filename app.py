@@ -180,7 +180,11 @@ def run_progress(name):
         "batch_size": run["batch_size"], "batch_seq": run["batch_seq"],
         "done": c["done"], "ready": c["ready"], "processing": c["processing"],
         "error": c["error"], "images": c["total"],
-        "complete": total_rows and run["cursor"] >= total_rows,
+        # a run is only complete once every row is collected AND the final batch
+        # has been confirmed -- otherwise the last batch would skip the
+        # review/edit/confirm step (the home page keeps a "resume" link into it).
+        "complete": bool(total_rows and run["cursor"] >= total_rows
+                         and run["reviewed_seq"] >= run["batch_seq"]),
     }
 
 

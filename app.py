@@ -101,8 +101,25 @@ def read_csv(name):
         return reader.fieldnames or [], list(reader)
 
 
-def build_query(row, cols):
-    return " ".join((row.get(c) or "").strip() for c in cols).strip()
+def dup_primaries(rows, primary):
+    """Set of primary values (casefolded) that appear on more than one row --
+    those are the rows a secondary term is appended to, to tell them apart."""
+    from collections import Counter
+    counts = Counter((r.get(primary) or "").strip().casefold()
+                     for r in rows if (r.get(primary) or "").strip())
+    return {v for v, n in counts.items() if n > 1}
+
+
+def build_query(row, cols, dups=None):
+    """Query for a row. cols[0] is the primary term (always used); cols[1], if
+    present, is the secondary term, appended ONLY when this row's primary value
+    is duplicated across the dataset (dups) -- to disambiguate those rows."""
+    primary = (row.get(cols[0]) or "").strip()
+    if len(cols) > 1 and dups is not None and primary.casefold() in dups:
+        secondary = (row.get(cols[1]) or "").strip()
+        if secondary:
+            return f"{primary} {secondary}".strip()
+    return primary
 
 
 def slugify(s):
@@ -221,13 +238,17 @@ def configure():
 def configure_save():
     name = request.form.get("csv", "")
     fields, _ = read_csv(name)
-    cols = [c for c in request.form.getlist("col") if c in fields]
+    primary = request.form.get("primary", "")
+    secondary = request.form.get("secondary", "")
     batch_size = max(1, min(500, request.form.get("batch_size", 25, type=int) or 25))
     results = max(1, min(50, request.form.get("results", 20, type=int) or 20))
-    if not cols:
+    if primary not in fields:
         return render_template("message.html", title="error", crumb=[],
-                               heading="No columns selected",
-                               message="Pick at least one column.")
+                               heading="No primary term selected",
+                               message="Pick a primary search column.")
+    cols = [primary]
+    if secondary in fields and secondary != primary:
+        cols.append(secondary)
     db.upsert_run(name, cols, batch_size, results)
     return redirect(f"/collect?csv={name}")
 
@@ -259,9 +280,10 @@ def collect():
                                message=f"All {len(rows)} rows of {name} collected.")
 
     # cheap: build the query per row, but don't search -- the client does that.
+    dups = dup_primaries(rows, cols[0]) if len(cols) > 1 else None
     blocks = []
     for idx in range(start, end):
-        query = build_query(rows[idx], cols)
+        query = build_query(rows[idx], cols, dups)
         if not query:
             blocks.append({"idx": idx, "empty": True})
         else:
@@ -288,7 +310,8 @@ def research():
     if idx < 0 or idx >= len(rows):
         abort(404)
     cols = [c for c in json.loads(run["cols"]) if c in fields]
-    query = build_query(rows[idx], cols)
+    dups = dup_primaries(rows, cols[0]) if len(cols) > 1 else None
+    query = build_query(rows[idx], cols, dups)
     if not query:
         block = {"idx": idx, "empty": True}
     else:
@@ -327,13 +350,14 @@ def process_picks():
         if url:
             by_row.setdefault(ridx, []).append(url)
 
+    dups = dup_primaries(rows, cols[0]) if len(cols) > 1 else None
     queued = 0
     for ridx, urls in by_row.items():
         try:
             row = rows[int(ridx)]
         except (ValueError, IndexError):
             continue
-        query = build_query(row, cols)
+        query = build_query(row, cols, dups)
         slug = slugify(query)
         orig_dir = os.path.join(OUT_DIR, slug, "originals")
         os.makedirs(orig_dir, exist_ok=True)

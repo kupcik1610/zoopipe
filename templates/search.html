@@ -32,7 +32,6 @@
     <div class="collect-main">
       <form method="post" action="/process" class="has-fab">
         <input type="hidden" name="csv" value="{{ name }}">
-        {% for c in selected %}<input type="hidden" name="col" value="{{ c }}">{% endfor %}
 
         {% for b in blocks %}{% include "_fishblock.html" %}{% endfor %}
 

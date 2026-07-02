@@ -6,7 +6,7 @@
   {% if progress %}
     <div class="card resume-card">
       <strong>Run in progress</strong> — collected {{ progress.cursor }} of {{ progress.total_rows }} rows,
-      {{ progress.done }} plates done{% if progress.error %}, {{ progress.error }} errored{% endif %}.
+      {{ progress.done }} frames done{% if progress.error %}, {{ progress.error }} errored{% endif %}.
       {% if not progress.complete %}
         <a class="btn" href="/collect?csv={{ name }}">Resume run ▸</a>
       {% else %}<span class="tag">complete</span>{% endif %}

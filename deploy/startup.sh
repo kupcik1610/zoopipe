@@ -45,7 +45,11 @@ UV="$APP_HOME/bin/uv"
 [ -d "$APP_HOME/venv" ] || "$UV" venv "$APP_HOME/venv" --python 3.12
 "$UV" pip install --python "$APP_HOME/venv/bin/python" -r "$APP_HOME/app/requirements.txt" || true
 
-mkdir -p "$APP_HOME/models"
+# pre-fetch the ~1GB bg-removal model so the first Process job doesn't stall.
+# rembg caches to its default dir (~/.u2net) and skips the download if present.
+( cd "$APP_HOME/app" && "$APP_HOME/venv/bin/python" -c "import imaging; imaging.session()" ) || \
+  echo "WARN: model pre-download failed; first job will fetch it"
+
 chown -R "$APP_USER:$APP_USER" "$APP_HOME"
 
 # --- systemd service ---------------------------------------------------------
@@ -60,12 +64,10 @@ User=$APP_USER
 WorkingDirectory=$APP_HOME/app
 Environment=HOST=127.0.0.1
 Environment=PORT=5001
-Environment=OPEN_BROWSER=0
-Environment=U2NET_HOME=$APP_HOME/models
 Environment=APP_KEY=$APP_KEY
 Environment=WORKER_CONCURRENCY=8
 Environment=WORKER_THREADS=8
-ExecStart=$APP_HOME/venv/bin/python $APP_HOME/app/run_server.py
+ExecStart=$APP_HOME/venv/bin/python $APP_HOME/app/app.py
 Restart=always
 RestartSec=3
 

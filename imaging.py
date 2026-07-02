@@ -1,217 +1,25 @@
 #!/usr/bin/env python3
-"""Image processing shared by the web app (app.py) and the batch worker
-(worker.py): background removal + normalize onto a white catalogue plate.
+"""Cut the background out with rembg (birefnet-general) and fit the subject onto
+a white catalogue frame. Shared by app.py and the worker.
 
-Background removal uses rembg. The model + options below are the quality recipe
-validated in bg_lab.py -- birefnet-general gives the cleanest fins/edges, with
-alpha-matting + mask post-processing to tidy soft edges and speckles. Flip these
-constants if you want to trade quality for speed (e.g. isnet-general-use).
+alpha-matting + mask post-processing were tried (see bg_lab.py) and dropped --
+no visible gain over a plain birefnet mask plus the light edge feather below.
 """
-import io, os
+from rembg import remove as _rembg_remove, new_session
+from PIL import Image, ImageFilter, ImageChops
+import io
+import os
 
-# ---- the recipe (tweak here) ------------------------------------------------
+# ---- recipe knobs -----------------------------------------------------------
 REMBG_MODEL = os.environ.get("REMBG_MODEL", "birefnet-general")
-USE_ALPHA_MATTING = os.environ.get("REMBG_ALPHA", "1") != "0"
-POST_PROCESS_MASK = os.environ.get("REMBG_POSTPROCESS", "1") != "0"
-_AM = dict(
-    alpha_matting_foreground_threshold=270,
-    alpha_matting_background_threshold=20,
-    alpha_matting_erode_size=11,
-)
-# Edge smoothing: feather the cut-out's alpha so stair-stepped edges anti-alias
-# into the white plate instead of looking jagged. EDGE_ERODE pulls the edge in a
-# couple px (eats the leftover background fringe), EDGE_FEATHER softly blurs the
-# mask. Runs at full cut-out resolution, before the down-scale, for clean edges.
+# Erode the alpha a couple px to eat the leftover bg fringe, then blur it so the
+# edge anti-aliases onto white instead of stair-stepping.
 EDGE_ERODE = 2        # px pulled inward off the subject edge
 EDGE_FEATHER = 1.5    # gaussian blur radius applied to the alpha mask
-CANVAS = (600, 470)            # final plate size; subject fitted, rest padded white
-
-# Pillow + rembg are OPTIONAL: without them callers fall back to saving raw.
-try:
-    from PIL import Image
-    HAVE_PIL = True
-except Exception:
-    HAVE_PIL = False
-
-try:
-    from rembg import remove as _rembg_remove, new_session
-    HAVE_REMBG = True
-except Exception:
-    HAVE_REMBG = False
-
-_session = None
+CANVAS = (600, 470)   # final frame size; subject fitted, rest padded white
 
 
-def session():
-    """The rembg model session, created once and reused (model loads on first
-    use; birefnet-general also downloads ~1GB the very first time)."""
-    global _session
-    if _session is None:
-        _session = new_session(REMBG_MODEL)
-    return _session
-
-
-def _cut_out(image_bytes):
-    """Run the bg-removal recipe -> transparent RGBA cut-out image (smoothed)."""
-    kw = {"session": session()}
-    if USE_ALPHA_MATTING:
-        kw["alpha_matting"] = True
-        kw.update(_AM)
-    if POST_PROCESS_MASK:
-        kw["post_process_mask"] = True
-    cut = _rembg_remove(image_bytes, **kw)
-    return _smooth_alpha(Image.open(io.BytesIO(cut)).convert("RGBA"))
-
-
-def _smooth_alpha(img):
-    """Anti-alias the cut-out edge so it sits cleanly on the white plate.
-
-    rembg's mask has near-binary, stair-stepped edges. We erode the alpha a
-    couple px to eat the background fringe left around the subject, then apply a
-    small gaussian blur so the remaining edge fades smoothly instead of jagged.
-    Done at full resolution before any down-scale for the softest result.
-    """
-    from PIL import ImageFilter
-    a = img.getchannel("A")
-    if EDGE_ERODE > 0:
-        a = a.filter(ImageFilter.MinFilter(EDGE_ERODE * 2 + 1))
-    if EDGE_FEATHER > 0:
-        a = a.filter(ImageFilter.GaussianBlur(EDGE_FEATHER))
-    img.putalpha(a)
-    return img
-
-
-# ---- image processing: cut out -> fit on white canvas -> flip ---------------
-def normalize(image_bytes, flip=False, rotate=0, trim=False):
-    """Return (out_bytes, ext, notes[]).
-
-    Pipeline: remove background -> rotate (degrees, clockwise) -> trim to the
-    subject's bounding box -> fit onto a fixed CANVAS-sized white background ->
-    flip so the head points LEFT. Rotating/trimming happen on the transparent
-    cut-out so corners stay clean and the crop hugs the animal. The subject is
-    scaled proportionally and centered, leftover space padded white -- it never
-    distorts, an aspect-ratio mismatch just adds white.
-    """
-    notes = []
-    if not HAVE_PIL:
-        return image_bytes, _ext(image_bytes), ["pillow-missing: saved raw"]
-
-    try:
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-    except Exception as e:
-        # bytes Pillow can't decode (e.g. AVIF/SVG/corrupt) -> save raw, don't crash
-        return image_bytes, _ext(image_bytes), [f"normalize-skipped:{type(e).__name__}"]
-
-    # 1) background removal -> transparent RGBA cut-out
-    has_alpha = False
-    if HAVE_REMBG:
-        try:
-            img = _cut_out(image_bytes)
-            has_alpha = True
-            notes.append(f"bg-removed:{REMBG_MODEL}")
-        except Exception as e:
-            notes.append(f"rembg-failed:{type(e).__name__}")
-    else:
-        notes.append("rembg-missing: bg not whitened")
-
-    # 2) rotate on the transparent canvas (CSS-style: positive = clockwise)
-    if rotate:
-        img = img.rotate(-rotate, resample=Image.BICUBIC, expand=True)
-        notes.append(f"rotated:{rotate}")
-
-    # 3) trim to the subject's bounding box (+ small proportional margin)
-    if trim:
-        bbox = img.getchannel("A").getbbox() if has_alpha else _nonwhite_bbox(img)
-        if bbox:
-            m = round(0.03 * max(img.width, img.height))
-            l, t, r, b = bbox
-            img = img.crop((max(0, l - m), max(0, t - m),
-                            min(img.width, r + m), min(img.height, b + m)))
-            notes.append("trimmed")
-
-    # 4) fit the cut-out onto a fixed white canvas, scaled + centered.
-    #    Compositing over OPAQUE white blends edges against white (no dark halo),
-    #    so the later convert("RGB") is a no-op on an already-opaque image.
-    w, h = CANVAS
-    scale = min(w / img.width, h / img.height)
-    nw, nh = max(1, round(img.width * scale)), max(1, round(img.height * scale))
-    img = img.resize((nw, nh), Image.LANCZOS)
-    bg = Image.new("RGBA", (w, h), (255, 255, 255, 255))
-    bg.alpha_composite(img, ((w - nw) // 2, (h - nh) // 2))
-    img = bg
-
-    # 5) flip so the head points left
-    if flip:
-        img = img.transpose(Image.FLIP_LEFT_RIGHT)
-        notes.append("flipped-to-left")
-
-    out = io.BytesIO()
-    img.convert("RGB").save(out, format="JPEG", quality=90)
-    return out.getvalue(), "jpg", notes
-
-
-def retouch(image_bytes, flip=False, rotate=0, trim=False):
-    """Re-frame an ALREADY background-removed plate: rotate / trim / flip back
-    onto the white canvas. Pure geometry -- no rembg, so it's instant and never
-    competes with the worker for CPU. The plate is already on white, so rotation
-    just fills new corners white and trim finds the subject by its non-white box.
-    """
-    notes = []
-    if not HAVE_PIL:
-        return image_bytes, _ext(image_bytes), ["pillow-missing: saved raw"]
-    try:
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    except Exception as e:
-        return image_bytes, _ext(image_bytes), [f"retouch-skipped:{type(e).__name__}"]
-
-    if rotate:
-        img = img.rotate(-rotate, resample=Image.BICUBIC, expand=True,
-                         fillcolor=(255, 255, 255))
-        notes.append(f"rotated:{rotate}")
-
-    if trim:
-        bbox = _nonwhite_bbox(img)
-        if bbox:
-            m = round(0.03 * max(img.width, img.height))
-            l, t, r, b = bbox
-            img = img.crop((max(0, l - m), max(0, t - m),
-                            min(img.width, r + m), min(img.height, b + m)))
-            notes.append("trimmed")
-
-    w, h = CANVAS
-    scale = min(w / img.width, h / img.height)
-    nw, nh = max(1, round(img.width * scale)), max(1, round(img.height * scale))
-    img = img.resize((nw, nh), Image.LANCZOS)
-    canvas = Image.new("RGB", (w, h), (255, 255, 255))
-    canvas.paste(img, ((w - nw) // 2, (h - nh) // 2))
-    img = canvas
-
-    if flip:
-        img = img.transpose(Image.FLIP_LEFT_RIGHT)
-        notes.append("flipped-to-left")
-
-    out = io.BytesIO()
-    img.save(out, format="JPEG", quality=90)
-    return out.getvalue(), "jpg", notes
-
-
-def _nonwhite_bbox(img, thresh=12):
-    """Bounding box of the non-white content (fallback when there's no alpha)."""
-    from PIL import ImageChops
-    rgb = img.convert("RGB")
-    bg = Image.new("RGB", rgb.size, (255, 255, 255))
-    diff = ImageChops.difference(rgb, bg).convert("L").point(lambda p: 255 if p > thresh else 0)
-    return diff.getbbox()
-
-
-def _ext(b):
-    if b[:8] == b"\x89PNG\r\n\x1a\n":
-        return "png"
-    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
-        return "webp"
-    return "jpg"
-
-
+# ---- raw-bytes helpers ------------------------------------------------------
 def is_image(b):
     """True only for real raster image bytes (rejects HTML pages, SVG, etc.)."""
     if not b or len(b) < 64:
@@ -222,13 +30,126 @@ def is_image(b):
             or b[:6] in (b"GIF87a", b"GIF89a"))           # GIF
 
 
-def warm():
-    """Load the model once so the first real job doesn't pay init cost mid-batch."""
-    if not (HAVE_PIL and HAVE_REMBG):
-        return
+def _ext(b):
+    if b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "webp"
+    return "jpg"
+
+
+# ---- background removal (rembg) ---------------------------------------------
+_session = None
+
+
+def session():
+    """The rembg session, made once and reused (first call loads the ~1GB model)."""
+    global _session
+    if _session is None:
+        _session = new_session(REMBG_MODEL)
+    return _session
+
+
+def _smooth_alpha(img):
+    """Erode + feather the alpha so the cut-out edge sits cleanly on white.
+    Runs at full resolution, before any down-scale, for the softest edge."""
+    a = img.getchannel("A")
+    if EDGE_ERODE > 0:
+        a = a.filter(ImageFilter.MinFilter(EDGE_ERODE * 2 + 1))
+    if EDGE_FEATHER > 0:
+        a = a.filter(ImageFilter.GaussianBlur(EDGE_FEATHER))
+    img.putalpha(a)
+    return img
+
+
+def _cut_out(img):  # PIL in/out -> smoothed transparent RGBA cut-out (bg removed)
+    cut = _rembg_remove(img, session=session()).convert("RGBA")
+    return _smooth_alpha(cut)
+
+
+# ---- framing geometry (Pillow) ----------------------------------------------
+def _trim_to_subject(img, bbox):
+    """Crop img to bbox plus a small proportional margin. bbox must be truthy."""
+    m = round(0.03 * max(img.width, img.height))
+    l, t, r, b = bbox
+    return img.crop((max(0, l - m), max(0, t - m),
+                     min(img.width, r + m), min(img.height, b + m)))
+
+
+def _fit_on_white(img):
+    """Scale an RGB image to fit CANVAS and center it on white, padding the rest
+    (never distorts). Callers flatten any alpha onto white first."""
+    w, h = CANVAS
+    scale = min(w / img.width, h / img.height)
+    nw = max(1, round(img.width * scale))
+    nh = max(1, round(img.height * scale))
+    img = img.resize((nw, nh), Image.LANCZOS)
+    bg = Image.new("RGB", (w, h), (255, 255, 255))
+    bg.paste(img, ((w - nw) // 2, (h - nh) // 2))
+    return bg
+
+
+def _nonwhite_bbox(img, thresh=12):
+    """Bounding box of the non-white content (how adjust_frame finds the subject)."""
+    rgb = img.convert("RGB")
+    bg = Image.new("RGB", rgb.size, (255, 255, 255))
+    diff = ImageChops.difference(rgb, bg).convert("L")
+    diff = diff.point(lambda p: 255 if p > thresh else 0)
+    return diff.getbbox()
+
+
+# ---- build / re-frame a catalogue frame -------------------------------------
+def make_frame(image_bytes):
+    """Raw photo -> finished frame: (out_bytes, ext, notes). Cut out the
+    background, trim to the subject, fit centered on white. Anything that can't
+    produce a real frame (bad bytes, rembg failure, empty cut-out) raises, so
+    process_one errors the job instead of saving a half-made or blank one."""
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+    img = _cut_out(img)
+
+    bbox = img.getchannel("A").getbbox()
+    if not bbox:
+        raise ValueError("empty cut-out: rembg found no subject")
+    img = _trim_to_subject(img, bbox)
+
+    # flatten onto white using the cut-out's own alpha (blends the feathered
+    # edges against white, no dark halo), then fit centered on the frame.
+    white = Image.new("RGB", img.size, (255, 255, 255))
+    white.paste(img, (0, 0), img)
+    img = _fit_on_white(white)
+
+    out = io.BytesIO()
+    # q100, 4:4:4: don't re-soften the edges we just feathered.
+    img.save(out, format="JPEG", quality=100, subsampling=0)
+    return out.getvalue(), "jpg", [f"bg-removed:{REMBG_MODEL}", "trimmed"]
+
+
+def adjust_frame(image_bytes, flip=False, rotate=0, trim=False):
+    """Re-frame an already-finished (white-bg) frame: rotate / trim / flip, no
+    rembg. Finds the subject by its non-white box since there's no alpha left."""
+    notes = []
     try:
-        buf = io.BytesIO()
-        Image.new("RGB", (16, 16), (128, 128, 128)).save(buf, format="PNG")
-        _rembg_remove(buf.getvalue(), session=session())
-    except Exception:
-        pass
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception as e:
+        return image_bytes, _ext(image_bytes), [f"adjust-skipped:{type(e).__name__}"]
+
+    if rotate:
+        img = img.rotate(-rotate, resample=Image.BICUBIC, expand=True,
+                         fillcolor=(255, 255, 255))
+        notes.append(f"rotated:{rotate}")
+
+    if trim:
+        bbox = _nonwhite_bbox(img)
+        if bbox:
+            img = _trim_to_subject(img, bbox)
+            notes.append("trimmed")
+
+    img = _fit_on_white(img)
+
+    if flip:
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        notes.append("flipped-to-left")
+
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=100, subsampling=0)
+    return out.getvalue(), "jpg", notes

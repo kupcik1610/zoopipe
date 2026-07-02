@@ -35,6 +35,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python app.py        # http://127.0.0.1:5001
 ```
 
+Model na odstránenie pozadia (~1 GB) sa stiahne sám pri prvom spracovaní
+(tlačidlo **Process**); prvá dávka preto chvíľu trvá.
+
 Worker spúšťa tlačidlo **Process** automaticky (ako samostatný proces). Dá sa
 spustiť aj ručne v termináli — spracuje všetko, čo je vo fronte, a skončí:
 

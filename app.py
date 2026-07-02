@@ -8,7 +8,7 @@ Flow:
      images you want -> their originals download immediately and queue as jobs
   4. press Process: a background worker (worker.py) background-removes the batch
      with birefnet; a progress table shows it happen live
-  5. review/adjust the finished plates, then collect the next batch
+  5. review/adjust the finished frames, then collect the next batch
 
 Your place in each CSV (the cursor) and every job's status live in out/jobs.sqlite,
 so you can close the app and pick any run back up exactly where you left off.
@@ -16,9 +16,15 @@ so you can close the app and pick any run back up exactly where you left off.
 Heavy bg-removal runs in worker.py, NOT in the request. Download via stdlib
 urllib; image processing via imaging.py (rembg birefnet + Pillow).
 
-  .venv/bin/python app.py        # http://127.0.0.1:5001
+  .venv/bin/python app.py                 # http://127.0.0.1:5001 (prod-safe)
+  FLASK_DEBUG=1 .venv/bin/python app.py   # local dev: reloader + debugger on
+
+This is also the server entrypoint (systemd runs it); HOST/PORT/FLASK_DEBUG
+come from the environment. See _serve() at the bottom.
 """
 import csv, os, re, sys, time, json, subprocess, urllib.request, urllib.error
+from collections import Counter
+
 from flask import (Flask, request, render_template, abort,
                    send_from_directory, redirect, jsonify, Response)
 from ddgs import DDGS
@@ -37,8 +43,8 @@ db.init()
 # ---- optional secret-link gate ----------------------------------------------
 # Set APP_KEY in the environment to lock the app behind a secret link (used when
 # it's exposed on a server). Unset -> no gate, so local use is unchanged.
-#   * she opens  https://host/?key=SECRET  once -> we drop a cookie and redirect
-#     to a clean URL, so she stays logged in with nothing to type or remember.
+#   * the user opens  https://host/?key=SECRET  once -> we drop a cookie and
+#     redirect to a clean URL, so they stay logged in with nothing to remember.
 #   * anyone without the cookie or the key just gets a 404 (the app is invisible).
 APP_KEY = os.environ.get("APP_KEY")
 _COOKIE = "zoopipe_key"
@@ -49,8 +55,8 @@ def _require_key():
     if not APP_KEY:
         return
     if request.cookies.get(_COOKIE) == APP_KEY:
-        return                                   # already logged in
-    if request.args.get("key") == APP_KEY:       # the secret link -> set cookie
+        return
+    if request.args.get("key") == APP_KEY:
         resp = redirect(request.path)
         resp.set_cookie(_COOKIE, APP_KEY, max_age=31536000,
                         httponly=True, samesite="Lax", secure=True)
@@ -101,10 +107,29 @@ def read_csv(name):
         return reader.fieldnames or [], list(reader)
 
 
+_rowcount_cache = {}    # abs path -> ((mtime_ns, size), data-row count)
+
+def count_rows(name):
+    """Number of data rows in a CSV, memoized by file mtime+size. The home page
+    calls this once per CSV on every render, so we avoid re-parsing each file
+    just to get a length; the cache invalidates whenever the file changes."""
+    path = csv_path(name)
+    st = os.stat(path)
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _rowcount_cache.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    # csv.reader (not raw line count) so quoted fields with embedded newlines
+    # count as one row; minus the header row.
+    with open(path, encoding="utf-8-sig") as f:
+        count = max(0, sum(1 for _ in csv.reader(f)) - 1)
+    _rowcount_cache[path] = (key, count)
+    return count
+
+
 def dup_primaries(rows, primary):
     """Set of primary values (casefolded) that appear on more than one row --
     those are the rows a secondary term is appended to, to tell them apart."""
-    from collections import Counter
     counts = Counter((r.get(primary) or "").strip().casefold()
                      for r in rows if (r.get(primary) or "").strip())
     return {v for v, n in counts.items() if n > 1}
@@ -128,6 +153,19 @@ def slugify(s):
     return s[:60] or "fish"
 
 
+def query_context(name, run):
+    """Shared per-row query setup for a run -> (rows, cols, dups).
+
+    cols is the run's configured columns filtered to those still in the CSV;
+    dups is the duplicate-primary set (or None when there's no secondary term).
+    Feed a single row through build_query(rows[idx], cols, dups) to get its term.
+    """
+    fields, rows = read_csv(name)
+    cols = [c for c in json.loads(run["cols"]) if c in fields]
+    dups = dup_primaries(rows, cols[0]) if len(cols) > 1 else None
+    return rows, cols, dups
+
+
 # ---- search -----------------------------------------------------------------
 def raw_image_search(query, max_results, retries=2):
     """DuckDuckGo image search, restricted to 'Large' so we get big photos.
@@ -144,20 +182,6 @@ def raw_image_search(query, max_results, retries=2):
     raise last
 
 
-def _int(v):
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return 0
-
-
-def by_size(results):
-    """Sort the (already Large-only) results biggest-area first."""
-    kept = [r for r in results if r.get("image")]
-    kept.sort(key=lambda r: _int(r.get("width")) * _int(r.get("height")), reverse=True)
-    return kept
-
-
 # ---- out/ path helpers ------------------------------------------------------
 def resolve_out(rel):
     """Validate 'slug/n.jpg' stays inside out/, returning its absolute path."""
@@ -170,14 +194,20 @@ def resolve_out(rel):
 
 # ---- worker spawn -----------------------------------------------------------
 def spawn_worker():
-    """Launch worker.py as a detached background process (no-op if one runs)."""
+    """Launch worker.py as a background child (no-op if one already runs).
+
+    NOT detached: it shares our process group, so a terminal Ctrl-C reaches the
+    worker pool too and any in-flight job is killed -- reset_stale() flips it
+    back to 'ready' on the next start, so nothing is lost."""
     if db.worker_running():
         return
-    logf = open(os.path.join(OUT_DIR, "worker.log"), "a")
-    subprocess.Popen(
-        [sys.executable, os.path.join(BASE_DIR, "worker.py")],
-        cwd=BASE_DIR, stdout=logf, stderr=logf, start_new_session=True,
-    )
+    # Popen dups the fd for the child at spawn; close our copy so each Process
+    # click doesn't leak an open handle in the web process.
+    with open(os.path.join(OUT_DIR, "worker.log"), "a") as logf:
+        subprocess.Popen(
+            [sys.executable, os.path.join(BASE_DIR, "worker.py")],
+            cwd=BASE_DIR, stdout=logf, stderr=logf,
+        )
 
 
 # ---- run / batch helpers ----------------------------------------------------
@@ -187,8 +217,7 @@ def run_progress(name):
     if not run:
         return None
     try:
-        _, rows = read_csv(name)
-        total_rows = len(rows)
+        total_rows = count_rows(name)
     except Exception:
         total_rows = 0
     c = db.counts(name)
@@ -259,8 +288,8 @@ def collect():
 
     The searches are NOT run here. The page renders instantly with one skeleton
     block per row; the browser then streams each row's images in via /research
-    (see collect.js). That way she can start picking the first fish while the
-    rest are still loading, instead of waiting for the whole batch to search."""
+    (see collect.js). That way the user can start picking the first fish while
+    the rest are still loading, instead of waiting for the whole batch to search."""
     name = request.args.get("csv", "")
     run = db.get_run(name)
     if not run:
@@ -269,8 +298,7 @@ def collect():
     # the user back to its progress table to finish reviewing/confirming.
     if run["batch_seq"] > run["reviewed_seq"]:
         return redirect(f"/progress?csv={name}&batch={run['batch_seq']}")
-    fields, rows = read_csv(name)
-    cols = [c for c in json.loads(run["cols"]) if c in fields]
+    rows, cols, dups = query_context(name, run)
     start = run["cursor"]
     end = min(len(rows), start + run["batch_size"])
 
@@ -279,8 +307,6 @@ def collect():
                                heading="Run complete",
                                message=f"All {len(rows)} rows of {name} collected.")
 
-    # cheap: build the query per row, but don't search -- the client does that.
-    dups = dup_primaries(rows, cols[0]) if len(cols) > 1 else None
     blocks = []
     for idx in range(start, end):
         query = build_query(rows[idx], cols, dups)
@@ -306,18 +332,19 @@ def research():
     run = db.get_run(name)
     if not run or idx is None:
         abort(404)
-    fields, rows = read_csv(name)
+    rows, cols, dups = query_context(name, run)
     if idx < 0 or idx >= len(rows):
         abort(404)
-    cols = [c for c in json.loads(run["cols"]) if c in fields]
-    dups = dup_primaries(rows, cols[0]) if len(cols) > 1 else None
     query = build_query(rows[idx], cols, dups)
     if not query:
         block = {"idx": idx, "empty": True}
     else:
         try:
-            block = {"idx": idx, "query": query,
-                     "results": by_size(raw_image_search(query, run["results"]))}
+            # keep DDG's own order; just drop any result with no image URL
+            # (it'd render an unpickable, broken card).
+            results = [r for r in raw_image_search(query, run["results"])
+                       if r.get("image")]
+            block = {"idx": idx, "query": query, "results": results}
         except Exception as e:
             block = {"idx": idx, "query": query, "error": f"{type(e).__name__}: {e}"}
     return render_template("_fishblock.html", b=block, selected=cols)
@@ -329,8 +356,7 @@ def process_picks():
     run = db.get_run(name)
     if not run:
         abort(400, "no run for this CSV")
-    fields, rows = read_csv(name)
-    cols = [c for c in json.loads(run["cols"]) if c in fields]
+    rows, cols, dups = query_context(name, run)
     picks = request.form.getlist("pick")
 
     if not picks:
@@ -343,14 +369,12 @@ def process_picks():
     span = min(run["batch_size"], max(0, len(rows) - run["cursor"]))
     batch = db.advance_run(name, span)
 
-    # group picked URLs by absolute row index
     by_row = {}
     for token in picks:
         ridx, _, url = token.partition("|||")
         if url:
             by_row.setdefault(ridx, []).append(url)
 
-    dups = dup_primaries(rows, cols[0]) if len(cols) > 1 else None
     queued = 0
     for ridx, urls in by_row.items():
         try:
@@ -365,7 +389,7 @@ def process_picks():
             try:
                 raw = get_bytes(url)
             except Exception:
-                continue                 # download failed -> just skip this pick
+                continue
             if not imaging.is_image(raw):
                 continue
             n = db.next_n(name, slug)
@@ -412,12 +436,11 @@ def status():
     return jsonify({
         "counts": c,
         "worker_running": db.worker_running(),
-        "worker_phase": db.worker_phase(),
         "active": c["ready"] > 0 or c["processing"] > 0,
         "jobs": [{
             "id": j["id"], "slug": j["slug"], "n": j["n"],
             "status": j["status"], "secs": j["secs"], "notes": j["notes"],
-            "orig": j["orig_path"], "plate": j["plate_path"],
+            "orig": j["orig_path"], "frame": j["plate_path"],
         } for j in jobs],
     })
 
@@ -464,11 +487,11 @@ def edit_save():
     angle = max(-180, min(180, request.form.get("rotate", 0, type=int) or 0))
     do_flip = bool(request.form.get("flip"))
 
-    # pure geometry on the finished plate -- no background removal / rembg.
+    # pure geometry on the finished frame -- no background removal / rembg.
     # always trim+centre so the fish stays properly framed in the box.
     with open(dest, "rb") as f:
         raw = f.read()
-    out, _, _ = imaging.retouch(raw, flip=do_flip, rotate=angle, trim=True)
+    out, _, _ = imaging.adjust_frame(raw, flip=do_flip, rotate=angle, trim=True)
     with open(dest, "wb") as f:
         f.write(out)
     if request.headers.get("X-Requested-With") == "fetch":
@@ -481,6 +504,22 @@ def serve_out(filename):
     return send_from_directory(OUT_DIR, filename)
 
 
+def _serve():
+    """Run the app for both local use and the server (systemd's ExecStart).
+
+    Debug is OFF unless FLASK_DEBUG=1 -- in production its reloader double-spawns
+    the process (two worker supervisors, double auto-pull) and its error page is
+    a remote-code-execution hole, so it must never be on there. HOST/PORT come
+    from the environment (the systemd unit sets them; locally they default to a
+    localhost server on 127.0.0.1:5001)."""
+    host = os.environ.get("HOST", "127.0.0.1")
+    # avoid 5000 -- macOS AirPlay Receiver squats on it (403 in browser).
+    port = int(os.environ.get("PORT", "5001"))
+    debug = os.environ.get("FLASK_DEBUG") == "1"
+    url = f"http://{host}:{port}"
+    print(f"\n  zoopipe is running  ->  {url}\n")
+    app.run(host=host, port=port, debug=debug)
+
+
 if __name__ == "__main__":
-    # NB: avoid port 5000 -- macOS AirPlay Receiver squats on it (403 in browser).
-    app.run(debug=True, port=5001)
+    _serve()

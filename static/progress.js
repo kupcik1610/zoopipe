@@ -10,14 +10,14 @@
   var ICON = { done: '✓', processing: '⟳', ready: '•', error: '⚠' };
 
   function rowHtml(j) {
-    var done = j.status === 'done' && j.plate;
-    var img = done ? '/out/' + j.plate : '/out/' + j.orig;
-    var thumb = '<img loading="lazy"' + (done ? ' data-rel="' + j.plate + '"' : '') +
+    var done = j.status === 'done' && j.frame;
+    var img = done ? '/out/' + j.frame : '/out/' + j.orig;
+    var thumb = '<img loading="lazy"' + (done ? ' data-rel="' + j.frame + '"' : '') +
                 ' src="' + img + '" alt="">';
     var actions = '';
     if (done) {
-      actions = '<button type="button" class="rowbtn view" data-full="/out/' + j.plate + '">view</button>' +
-                '<a class="rowbtn edit" href="/edit?img=' + encodeURIComponent(j.plate) + '">edit</a>';
+      actions = '<button type="button" class="rowbtn view" data-full="/out/' + j.frame + '">view</button>' +
+                '<a class="rowbtn edit" href="/edit?img=' + encodeURIComponent(j.frame) + '">edit</a>';
     } else if (j.status === 'error') {
       actions = '<button type="button" class="retry" data-id="' + j.id + '">↻ retry</button>';
     }
@@ -54,18 +54,7 @@
     if (d.active) {
       // active queue but no live worker -> it died/never started; offer resume
       var stalled = !d.worker_running;
-      var wp = d.worker_phase;
-      var msg;
-      if (stalled) {
-        msg = 'paused — worker not running';
-      } else if (wp && wp.phase === 'warming') {
-        msg = 'loading model… (first plates start in a few seconds)';
-      } else if (wp && wp.workers > 1) {
-        msg = 'processing… (' + wp.workers + ' workers)';
-      } else {
-        msg = 'processing…';
-      }
-      state.textContent = msg;
+      state.textContent = stalled ? 'paused — worker not running' : 'processing…';
       if (resumeBtn) resumeBtn.hidden = !stalled;
     } else {
       state.textContent = c.error ? ('complete · ' + c.error + ' need a retry') : 'complete ✓';
@@ -99,7 +88,7 @@
       });
       return;
     }
-    // view a plate full-size in the shared lightbox (defined in app.js)
+    // view a frame full-size in the shared lightbox (defined in app.js)
     var v = e.target.closest('.view[data-full]');
     if (v) {
       e.preventDefault();
@@ -122,7 +111,7 @@
   // confirming a batch with still-errored images asks first
   var cform = document.querySelector('.confirm-form');
   if (cform) cform.addEventListener('submit', function (e) {
-    if (lastErr > 0 && !confirm(lastErr + ' image(s) still errored (no clean plate). Confirm batch as done anyway?')) {
+    if (lastErr > 0 && !confirm(lastErr + ' image(s) still errored (no clean frame). Confirm batch as done anyway?')) {
       e.preventDefault();
     }
   });

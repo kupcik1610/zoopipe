@@ -70,8 +70,8 @@
 
   // Stream the batch in: work through the pending rows (in order) with a small
   // pool of concurrent requests -- fast enough to fill quickly, gentle enough
-  // that DDG doesn't choke on a burst. She can pick from the first fish while
-  // the rest are still arriving.
+  // that DDG doesn't choke on a burst. The user can pick from the first fish
+  // while the rest are still arriving.
   var POOL = 4;
   var queue = [];
   document.querySelectorAll('details.fish[data-pending]').forEach(function (d) {

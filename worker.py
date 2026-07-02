@@ -2,8 +2,8 @@
 """Batch background-removal worker POOL.
 
 Drains `ready` jobs from the jobs ledger: reads the already-downloaded original
-off disk, runs the birefnet recipe (imaging.normalize), writes the white
-catalogue plate to out/<slug>/<n>.jpg, records timing/notes, and moves on.
+off disk, runs the birefnet recipe (imaging.make_frame), writes the white
+catalogue frame to out/<slug>/<n>.jpg, records timing/notes, and moves on.
 
 Parallel pool
 -------------
@@ -17,14 +17,14 @@ birefnet scales poorly with threads, so more workers beats more threads/worker.
 
   WORKER_CONCURRENCY   number of worker processes           (default 1)
   WORKER_THREADS       ONNX threads per worker (OMP)        (default 8)
-  WORKER_IDLE_TIMEOUT  secs a warm worker idles before exit (default 300)
+  WORKER_IDLE_TIMEOUT  secs an idle worker waits before exit (default 300)
 
-Warm once, not per batch
-------------------------
-The ~10-40s birefnet warm-up is paid once per worker at start; when the queue
-drains a worker stays alive and idle-polls, keeping the model warm. It exits
-only after WORKER_IDLE_TIMEOUT idle seconds, to free its ~2-3GB of RAM. The web
-app's Process button just adds `ready` jobs; still-warm workers pick them up
+Stay alive between batches
+--------------------------
+A worker loads the model lazily on its first job (~10-40s the first time), then
+stays alive and idle-polls so later jobs reuse the already-loaded model. It
+exits only after WORKER_IDLE_TIMEOUT idle seconds, to free its ~2-3GB of RAM.
+The web app's Process button just adds `ready` jobs; a live worker picks them up
 within a second (spawn_worker no-ops while the supervisor holds the lock).
 
     .venv/bin/python worker.py            # supervisor (spawns the pool)
@@ -42,7 +42,7 @@ OUT_DIR = os.path.join(BASE_DIR, "out")
 
 CONCURRENCY = max(1, int(os.environ.get("WORKER_CONCURRENCY", "1") or 1))
 THREADS = max(1, int(os.environ.get("WORKER_THREADS", "8") or 8))
-# how long a warm worker stays idle-polling before exiting to free RAM
+# how long an idle worker stays idle-polling before exiting to free RAM
 IDLE_TIMEOUT = float(os.environ.get("WORKER_IDLE_TIMEOUT", "300"))
 
 
@@ -51,42 +51,35 @@ def log(msg, tag="pool"):
 
 
 def process_one(job):
-    """Normalize one job's original into its plate. Returns (status, notes, secs)."""
+    """Turn one job's original into its frame.
+    Returns (status, notes, secs, frame_rel) -- frame_rel is None unless done."""
     src = os.path.join(OUT_DIR, job["orig_path"])
     if not os.path.isfile(src):
-        return "error", f"original missing: {job['orig_path']}", None
+        return "error", f"original missing: {job['orig_path']}", None, None
     try:
         with open(src, "rb") as f:
             raw = f.read()
         t0 = time.time()
-        out, ext, notes = imaging.normalize(raw, trim=True)
+        out, ext, notes = imaging.make_frame(raw)
         secs = round(time.time() - t0, 2)
     except Exception as e:
-        return "error", f"{type(e).__name__}: {e}", None
+        return "error", f"{type(e).__name__}: {e}", None, None
 
-    note_str = ", ".join(notes)
-    if any(n.startswith("rembg-failed") or n.startswith("rembg-missing") for n in notes):
-        # bg removal didn't actually happen -> treat as an error so it's visible
-        return "error", note_str or "bg-removal failed", secs
-
-    plate_rel = f"{job['slug']}/{job['n']}.{ext}"
-    dest = os.path.join(OUT_DIR, plate_rel)
+    frame_rel = f"{job['slug']}/{job['n']}.{ext}"
+    dest = os.path.join(OUT_DIR, frame_rel)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, "wb") as f:
         f.write(out)
-    return "done", note_str or "saved", secs
+    return "done", ", ".join(notes) or "saved", secs, frame_rel
 
 
 def drain(idx):
-    """One pool worker: warm the model once, then claim/process/idle-poll until
-    IDLE_TIMEOUT passes with an empty queue. Reports its phase for the UI."""
+    """One pool worker: claim/process/idle-poll until IDLE_TIMEOUT passes with
+    an empty queue. The model loads lazily on the first job."""
     tag = f"w{idx}"
     db.init()
-    db.set_worker_phase(idx, "warming")
-    log(f"warming model '{imaging.REMBG_MODEL}' "
-        f"({THREADS} threads; first run may download ~1GB)…", tag)
-    imaging.warm()
-    log("ready; draining queue.", tag)
+    log(f"ready; draining queue (model '{imaging.REMBG_MODEL}', {THREADS} "
+        f"threads; first job may load the model / download ~1GB)…", tag)
 
     done = 0
     last_work = time.time()
@@ -95,19 +88,15 @@ def drain(idx):
         if not job:
             if time.time() - last_work > IDLE_TIMEOUT:
                 break
-            db.set_worker_phase(idx, "idle")
             time.sleep(1.0)
             continue
-        db.set_worker_phase(idx, "running")
         label = f"#{job['id']} {job['slug']}/{job['n']}"
-        status, notes, secs = process_one(job)
-        plate = f"{job['slug']}/{job['n']}.jpg" if status == "done" else None
-        db.finish_job(job["id"], status, plate_path=plate, secs=secs, notes=notes)
+        status, notes, secs, frame = process_one(job)
+        db.finish_job(job["id"], status, plate_path=frame, secs=secs, notes=notes)
         done += 1
         last_work = time.time()
         log(f"{label}: {status} ({secs}s) {notes}", tag)
 
-    db.set_worker_phase(idx, "done")
     log(f"idle {int(IDLE_TIMEOUT)}s; exiting (processed {done} job(s) this run).", tag)
 
 

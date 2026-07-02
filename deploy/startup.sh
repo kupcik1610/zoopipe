@@ -27,8 +27,11 @@ apt-get install -y git curl ca-certificates gnupg apt-transport-https debian-key
 # --- app code (best-effort; disk copy is the source of truth) ----------------
 git config --global --add safe.directory "$APP_HOME/app" || true
 if [ -d "$APP_HOME/app/.git" ]; then
+  # reset to FETCH_HEAD (what we just fetched), not origin/$BRANCH -- the repo
+  # may have been cloned single-branch, in which case refs/remotes/origin/$BRANCH
+  # doesn't exist and `reset --hard origin/$BRANCH` silently fails.
   git -C "$APP_HOME/app" fetch --depth 1 origin "$BRANCH" && \
-    git -C "$APP_HOME/app" reset --hard "origin/$BRANCH" || \
+    git -C "$APP_HOME/app" reset --hard FETCH_HEAD || \
     echo "WARN: git update failed, keeping on-disk code"
 else
   git clone --depth 1 -b "$BRANCH" "$REPO" "$APP_HOME/app" || \

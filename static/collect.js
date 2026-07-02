@@ -51,23 +51,50 @@
     if (d.open) d.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
+  // Fetch one row's results and swap the (skeleton or old) block in place.
+  // Returns a promise so both the initial streaming load and the retry button
+  // can share it. Order in the DOM is fixed, so blocks fill in wherever they
+  // sit regardless of which search finishes first.
+  function loadFish(idx) {
+    var block = document.getElementById('fish-' + idx);
+    return fetch('/research?csv=' + encodeURIComponent(csv) + '&idx=' + idx)
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        var tmp = document.createElement('div');
+        tmp.innerHTML = html.trim();
+        var fresh = tmp.firstElementChild;
+        var target = document.getElementById('fish-' + idx);
+        if (fresh && target) { target.replaceWith(fresh); recount(); }
+      });
+  }
+
+  // Stream the batch in: work through the pending rows (in order) with a small
+  // pool of concurrent requests -- fast enough to fill quickly, gentle enough
+  // that DDG doesn't choke on a burst. She can pick from the first fish while
+  // the rest are still arriving.
+  var POOL = 4;
+  var queue = [];
+  document.querySelectorAll('details.fish[data-pending]').forEach(function (d) {
+    queue.push(d.getAttribute('data-idx'));
+  });
+  function pump() {
+    if (!queue.length) return;
+    var idx = queue.shift();
+    loadFish(idx).catch(function () { /* /research renders its own error card */ })
+      .then(pump);
+  }
+  for (var i = 0; i < POOL; i++) pump();
+
   // retry the search for a single fish (a DDG timeout shouldn't cost the batch)
   document.addEventListener('click', function (e) {
     var rb = e.target.closest('button.research');
     if (!rb) return;
     e.preventDefault(); e.stopPropagation();   // don't toggle the <details>
     var idx = rb.getAttribute('data-idx');
-    var block = document.getElementById('fish-' + idx);
     rb.disabled = true; rb.textContent = 'searching…';
-    fetch('/research?csv=' + encodeURIComponent(csv) + '&idx=' + idx)
-      .then(function (r) { return r.text(); })
-      .then(function (html) {
-        var tmp = document.createElement('div');
-        tmp.innerHTML = html.trim();
-        var fresh = tmp.firstElementChild;
-        if (fresh && block) { block.replaceWith(fresh); recount(); }
-      })
-      .catch(function () { rb.disabled = false; rb.textContent = '↻ retry search'; });
+    loadFish(idx).catch(function () {
+      rb.disabled = false; rb.textContent = '↻ retry search';
+    });
   });
 
   function setAll(open) {

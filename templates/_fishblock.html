@@ -3,6 +3,18 @@
 {% from "_macros.html" import result_card %}
 {% if b.empty %}
   <p class="muted noteblock" id="fish-{{ b.idx }}">row {{ b.idx + 1 }}: (empty query — no values in {{ selected|join(', ') }})</p>
+{% elif b.pending %}
+  {# Skeleton shown immediately; collect.js swaps in the real results per row. #}
+  <details class="fish pending" id="fish-{{ b.idx }}" data-idx="{{ b.idx }}" data-pending="1" open>
+    <summary>
+      <span class="latin">{{ b.query }}</span>
+      <span class="count loading">searching…</span>
+      <span class="sel-badge" data-badge="{{ b.idx }}" hidden>0 picked</span>
+    </summary>
+    <div class="grid">
+      {% for _ in range(4) %}<div class="thumb skel" aria-hidden="true"></div>{% endfor %}
+    </div>
+  </details>
 {% else %}
   <details class="fish" id="fish-{{ b.idx }}" data-idx="{{ b.idx }}" open>
     <summary>

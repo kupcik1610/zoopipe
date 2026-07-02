@@ -230,7 +230,12 @@ def configure_save():
 
 @app.get("/collect")
 def collect():
-    """Search the current batch -- the next `batch_size` rows from the cursor."""
+    """Show the current batch -- the next `batch_size` rows from the cursor.
+
+    The searches are NOT run here. The page renders instantly with one skeleton
+    block per row; the browser then streams each row's images in via /research
+    (see collect.js). That way she can start picking the first fish while the
+    rest are still loading, instead of waiting for the whole batch to search."""
     name = request.args.get("csv", "")
     run = db.get_run(name)
     if not run:
@@ -249,18 +254,14 @@ def collect():
                                heading="Run complete",
                                message=f"All {len(rows)} rows of {name} collected.")
 
+    # cheap: build the query per row, but don't search -- the client does that.
     blocks = []
     for idx in range(start, end):
         query = build_query(rows[idx], cols)
         if not query:
             blocks.append({"idx": idx, "empty": True})
-            continue
-        try:
-            results = raw_image_search(query, run["results"])
-        except Exception as e:
-            blocks.append({"idx": idx, "query": query, "error": f"{type(e).__name__}: {e}"})
-            continue
-        blocks.append({"idx": idx, "query": query, "results": by_size(results)})
+        else:
+            blocks.append({"idx": idx, "query": query, "pending": True})
 
     crumb = [(name, f"/configure?csv={name}"), ("collect", None)]
     return render_template(

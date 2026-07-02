@@ -9,7 +9,7 @@ set -ux   # NOTE: deliberately no -e / -o pipefail -- see above.
 APP_USER=zoopipe
 APP_HOME=/opt/zoopipe
 REPO=https://github.com/kupcik1610/zoopipe.git
-BRANCH=deploy
+BRANCH=main
 
 META="http://metadata.google.internal/computeMetadata/v1"
 metadata() { curl -s -H "Metadata-Flavor: Google" "$META/$1"; }
@@ -89,3 +89,41 @@ $DOMAIN {
 CADDYEOF
 systemctl enable caddy
 systemctl restart caddy
+
+# --- rclone: one-way sync of out/ -> Google Drive ----------------------------
+# The Drive OAuth token lives on the disk at /root/.config/rclone/rclone.conf
+# (created once, persists across reboots). We (re)install the rclone binary and
+# ensure the sync timer; if the config is missing the timer just no-ops.
+if ! command -v rclone &>/dev/null; then
+  curl -sL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip
+  apt-get install -y unzip || true
+  unzip -o -q /tmp/rclone.zip -d /tmp/rclone-dl
+  cp /tmp/rclone-dl/rclone-*-linux-amd64/rclone /usr/local/bin/
+  chmod +x /usr/local/bin/rclone
+fi
+
+cat >/etc/systemd/system/zoopipe-sync.service <<'SYNCEOF'
+[Unit]
+Description=Sync zoopipe out/ to Google Drive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rclone copy /opt/zoopipe/app/out gdrive:zoopipe-fish --create-empty-src-dirs --transfers=8 --checkers=16
+SYNCEOF
+
+cat >/etc/systemd/system/zoopipe-sync.timer <<'SYNCTEOF'
+[Unit]
+Description=Run zoopipe Drive sync every minute
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+Unit=zoopipe-sync.service
+
+[Install]
+WantedBy=timers.target
+SYNCTEOF
+systemctl daemon-reload
+systemctl enable --now zoopipe-sync.timer

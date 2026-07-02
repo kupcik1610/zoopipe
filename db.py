@@ -192,6 +192,36 @@ def set_orig_path(jid, orig_path):
         )
 
 
+def repick_rows(csv):
+    """Rows that still need a photo picked because their download failed and
+    nothing usable ever landed for them -- i.e. a row with a download-failure
+    error job (status='error', no orig_path) and NO other job that is done or
+    still in flight. These get resurfaced on the collect page so the user can
+    pick a different image. Returns rows of (row_index, query, slug)."""
+    with _db() as con:
+        return con.execute(
+            """
+            SELECT DISTINCT j.row_index AS row_index, j.query AS query, j.slug AS slug
+              FROM jobs j
+             WHERE j.csv=? AND j.status='error'
+                   AND (j.orig_path='' OR j.orig_path IS NULL)
+                   AND NOT EXISTS (
+                       SELECT 1 FROM jobs k
+                        WHERE k.csv=j.csv AND k.row_index=j.row_index
+                              AND k.status IN ('ready','processing','done')
+                   )
+             ORDER BY j.row_index
+            """,
+            (csv,),
+        ).fetchall()
+
+
+def pending_download_failures(csv):
+    """How many rows are still awaiting a re-pick (see repick_rows). Keeps a run
+    from counting 'complete' while some fish still have no usable image."""
+    return len(repick_rows(csv))
+
+
 def claim_job():
     """Atomically take the next ready job -> processing. Returns the row or None."""
     with _db() as con:

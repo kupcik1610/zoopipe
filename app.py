@@ -221,16 +221,19 @@ def run_progress(name):
     except Exception:
         total_rows = 0
     c = db.counts(name)
+    dl_pending = db.pending_download_failures(name)
     return {
         "cursor": run["cursor"], "total_rows": total_rows,
         "batch_size": run["batch_size"], "batch_seq": run["batch_seq"],
         "done": c["done"], "ready": c["ready"], "processing": c["processing"],
         "error": c["error"], "images": c["total"],
-        # a run is only complete once every row is collected AND the final batch
-        # has been confirmed -- otherwise the last batch would skip the
-        # review/edit/confirm step (the home page keeps a "resume" link into it).
+        "dl_pending": dl_pending,
+        # a run is only complete once every row is collected, the final batch has
+        # been confirmed (else it'd skip the review/edit/confirm step), AND no
+        # download is still owed a retry -- those get their own retry batch.
         "complete": bool(total_rows and run["cursor"] >= total_rows
-                         and run["reviewed_seq"] >= run["batch_seq"]),
+                         and run["reviewed_seq"] >= run["batch_seq"]
+                         and dl_pending == 0),
     }
 
 
@@ -302,12 +305,24 @@ def collect():
     start = run["cursor"]
     end = min(len(rows), start + run["batch_size"])
 
-    if start >= len(rows):
+    # fish from earlier batches whose download failed and still have no usable
+    # image -> resurface them (first) so the user can pick a different photo.
+    repick_blocks = []
+    for r in db.repick_rows(name):
+        idx = r["row_index"]
+        if start <= idx < end or not (0 <= idx < len(rows)):
+            continue                       # in this batch already, or stale
+        query = build_query(rows[idx], cols, dups)
+        if query:
+            repick_blocks.append({"idx": idx, "query": query,
+                                  "pending": True, "repick": True})
+
+    if start >= len(rows) and not repick_blocks:
         return render_template("message.html", title="done", crumb=[(name, None)],
                                heading="Run complete",
                                message=f"All {len(rows)} rows of {name} collected.")
 
-    blocks = []
+    blocks = list(repick_blocks)
     for idx in range(start, end):
         query = build_query(rows[idx], cols, dups)
         if not query:
@@ -319,7 +334,7 @@ def collect():
     return render_template(
         "search.html", title="collect", crumb=crumb, name=name, selected=cols,
         blocks=blocks, start=start, end=end, total=len(rows),
-        batch_no=run["batch_seq"] + 1,
+        batch_no=run["batch_seq"] + 1, repicks=len(repick_blocks),
     )
 
 
@@ -347,6 +362,9 @@ def research():
             block = {"idx": idx, "query": query, "results": results}
         except Exception as e:
             block = {"idx": idx, "query": query, "error": f"{type(e).__name__}: {e}"}
+    # keep the "download failed -- pick another" marker across the reload
+    if request.args.get("repick"):
+        block["repick"] = True
     return render_template("_fishblock.html", b=block, selected=cols)
 
 

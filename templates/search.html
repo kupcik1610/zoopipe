@@ -3,6 +3,9 @@
 {% block body %}
   <h1>Batch {{ batch_no }} <span class="muted">— rows {{ start + 1 }}–{{ end }} of {{ total }}</span></h1>
   <p class="lead">Tick the images you want, then Process — they download and the batch is background-removed.</p>
+  {% if repicks %}
+    <p class="lead repick-note">⚠ {{ repicks }} fish {{ 'need' if repicks > 1 else 'needs' }} a new photo — the previous download failed. Shown first below; pick a different image.</p>
+  {% endif %}
 
   <div class="collect-layout" data-csv="{{ name }}">
     <aside class="sidebar">

@@ -5,10 +5,12 @@
   <p class="muted noteblock" id="fish-{{ b.idx }}">row {{ b.idx + 1 }}: (empty query — no values in {{ selected|join(', ') }})</p>
 {% elif b.pending %}
   {# Skeleton shown immediately; collect.js swaps in the real results per row. #}
-  <details class="fish pending" id="fish-{{ b.idx }}" data-idx="{{ b.idx }}" data-pending="1" open>
+  <details class="fish pending{% if b.repick %} repick{% endif %}" id="fish-{{ b.idx }}"
+           data-idx="{{ b.idx }}" data-pending="1"{% if b.repick %} data-repick="1"{% endif %} open>
     <summary>
       <span class="latin">{{ b.query }}</span>
       <span class="count loading">searching…</span>
+      {% if b.repick %}<span class="repick-tag">download failed — pick another</span>{% endif %}
       <span class="sel-badge" data-badge="{{ b.idx }}" hidden>0 picked</span>
     </summary>
     <div class="grid">
@@ -16,11 +18,13 @@
     </div>
   </details>
 {% else %}
-  <details class="fish" id="fish-{{ b.idx }}" data-idx="{{ b.idx }}" open>
+  <details class="fish{% if b.repick %} repick{% endif %}" id="fish-{{ b.idx }}"
+           data-idx="{{ b.idx }}"{% if b.repick %} data-repick="1"{% endif %} open>
     <summary>
       <span class="latin">{{ b.query }}</span>
       {% if b.error %}<span class="count err">failed</span>
       {% else %}<span class="count">{{ b.results|length }}</span>{% endif %}
+      {% if b.repick %}<span class="repick-tag">download failed — pick another</span>{% endif %}
       <span class="sel-badge" data-badge="{{ b.idx }}" hidden>0 picked</span>
       <button type="button" class="research" data-idx="{{ b.idx }}">↻ retry search</button>
     </summary>

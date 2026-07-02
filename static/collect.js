@@ -39,7 +39,17 @@
     if (e.target.classList && e.target.classList.contains('pick')) recount();
   });
 
-  // sidebar: click a fish to toggle its block open/closed (+ scroll when opening)
+  // The fish summary is position:sticky, so collapsing a block you've scrolled
+  // into would leave the summary stuck up top and strand you further down the
+  // page. If a just-collapsed block's summary sits above the viewport, pull it
+  // back into view so you stay oriented on the block you closed.
+  function keepInView(d) {
+    if (!d.open && d.getBoundingClientRect().top < 0) {
+      d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
+  // sidebar: click a fish to toggle its block open/closed (+ scroll either way)
   var list = document.querySelector('.side-list');
   if (list) list.addEventListener('click', function (e) {
     var a = e.target.closest('a[data-jump]');
@@ -49,6 +59,18 @@
     if (!d) return;
     d.open = !d.open;
     if (d.open) d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else keepInView(d);
+  });
+
+  // collapsing a block via its own summary: correct the scroll the same way.
+  // (delegated on the container since /research swaps blocks in/out; the native
+  // toggle fires first, so we read d.open on the next tick.)
+  var main = document.querySelector('.collect-main');
+  if (main) main.addEventListener('click', function (e) {
+    var s = e.target.closest('summary');
+    if (!s) return;
+    var d = s.closest('details.fish');
+    if (d) setTimeout(function () { keepInView(d); }, 0);
   });
 
   // Fetch one row's results and swap the (skeleton or old) block in place.
@@ -57,7 +79,9 @@
   // sit regardless of which search finishes first.
   function loadFish(idx) {
     var block = document.getElementById('fish-' + idx);
-    return fetch('/research?csv=' + encodeURIComponent(csv) + '&idx=' + idx)
+    // keep the "download failed -- pick another" marker across the reload
+    var repick = block && block.getAttribute('data-repick') ? '&repick=1' : '';
+    return fetch('/research?csv=' + encodeURIComponent(csv) + '&idx=' + idx + repick)
       .then(function (r) { return r.text(); })
       .then(function (html) {
         var tmp = document.createElement('div');

@@ -24,6 +24,11 @@ come from the environment. See _serve() at the bottom.
 """
 import csv, os, re, sys, time, json, subprocess, urllib.request, urllib.error
 from collections import Counter
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# folder timestamps are shown in local (Bratislava) time even though the VM runs UTC
+_TZ = ZoneInfo("Europe/Bratislava")
 
 from flask import (Flask, request, render_template, abort,
                    send_from_directory, redirect, jsonify, Response)
@@ -160,6 +165,15 @@ def csv_folder(name):
     gets one big folder and the Drive sync mirrors the catalogue's structure."""
     stem = os.path.splitext(os.path.basename(name or ""))[0]
     return slugify(stem)
+
+
+def run_folder(name, run):
+    """Top-level out/ folder for one run, suffixed with a readable run-start
+    timestamp (e.g. 'hady_2026-07-06_01-30'). Derived from the run's created_at
+    so it's stable across all of the run's batches; every species folder lives
+    under it, so the dated folder is what shows up in Drive."""
+    ts = datetime.fromtimestamp(run["created_at"], _TZ).strftime("%Y-%m-%d_%H-%M")
+    return f"{csv_folder(name)}_{ts}"
 
 
 def query_context(name, run):
@@ -412,7 +426,7 @@ def process_picks():
         # prefix with the CSV's own folder so all its species group under one
         # top-level dir (out/<csv>/<slug>/...); slug is stored on each job, so
         # the worker and next_n build every downstream path from this same value.
-        slug = f"{csv_folder(name)}/{slugify(query)}"
+        slug = f"{run_folder(name, run)}/{slugify(query)}"
         orig_dir = os.path.join(OUT_DIR, slug, "originals")
         os.makedirs(orig_dir, exist_ok=True)
         for url in urls:

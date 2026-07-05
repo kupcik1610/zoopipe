@@ -1,10 +1,17 @@
-import re, csv, html, os, glob
+import re, csv, html, os, glob, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 # raw MiniZOO export pages live next to this script; output CSV goes to data/
-FILES = sorted(glob.glob(os.path.join(HERE, "page*.html")))
-OUT_CSV = os.path.join(ROOT, "data", "ryby.csv")
+# Usage: python parse.py [input_glob] [output_csv]
+#   defaults: page*.html  ->  data/ryby.csv
+#   e.g.:     python parse.py "tera_page*.html" data/terarium.csv
+in_glob = sys.argv[1] if len(sys.argv) > 1 else "page*.html"
+if not os.path.isabs(in_glob):
+    in_glob = os.path.join(HERE, in_glob)
+FILES = sorted(glob.glob(in_glob))
+out_arg = sys.argv[2] if len(sys.argv) > 2 else os.path.join("data", "ryby.csv")
+OUT_CSV = out_arg if os.path.isabs(out_arg) else os.path.join(ROOT, out_arg)
 
 # availability column classes in header order
 AVAIL = [

@@ -121,6 +121,22 @@
     });
   });
 
+  // Guard the Process submit: /process downloads every picked image before it
+  // redirects, so it can take a while with no visible change -- which invites a
+  // second click, and each submit advances the batch cursor, silently skipping a
+  // whole batch. Disable the button on first submit (and block re-entry) so the
+  // form can only be sent once; relabel it so it's clear something's happening.
+  var procForm = document.querySelector('form.has-fab');
+  if (procForm) procForm.addEventListener('submit', function (e) {
+    if (procForm.dataset.submitting) { e.preventDefault(); return; }
+    procForm.dataset.submitting = '1';
+    var fab = procForm.querySelector('.process-fab');
+    if (fab) {
+      fab.disabled = true;
+      fab.textContent = 'Processing… please wait';
+    }
+  });
+
   function setAll(open) {
     document.querySelectorAll('details.fish').forEach(function (d) { d.open = open; });
   }

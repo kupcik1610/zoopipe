@@ -153,6 +153,15 @@ def slugify(s):
     return s[:60] or "fish"
 
 
+def csv_folder(name):
+    """Top-level out/ folder for a CSV run -- its filename without the .csv
+    extension, slugified (e.g. 'terarium.csv' -> 'terarium'). Every species
+    folder for that CSV lives under it (out/terarium/<slug>/...), so each CSV
+    gets one big folder and the Drive sync mirrors the catalogue's structure."""
+    stem = os.path.splitext(os.path.basename(name or ""))[0]
+    return slugify(stem)
+
+
 def query_context(name, run):
     """Shared per-row query setup for a run -> (rows, cols, dups).
 
@@ -400,7 +409,10 @@ def process_picks():
         except (ValueError, IndexError):
             continue
         query = build_query(row, cols, dups)
-        slug = slugify(query)
+        # prefix with the CSV's own folder so all its species group under one
+        # top-level dir (out/<csv>/<slug>/...); slug is stored on each job, so
+        # the worker and next_n build every downstream path from this same value.
+        slug = f"{csv_folder(name)}/{slugify(query)}"
         orig_dir = os.path.join(OUT_DIR, slug, "originals")
         os.makedirs(orig_dir, exist_ok=True)
         for url in urls:

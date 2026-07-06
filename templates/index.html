@@ -1,37 +1,76 @@
-{% extends "base.html" %}
-{% block body %}
-  <h1>Pick a CSV</h1>
-  <div class="card">
-    <ul class="runlist">
-      {% for it in items %}
-        {% set p = it.progress %}
-        <li class="runrow">
-          <a class="runname" href="/configure?csv={{ it.name }}">{{ it.name }}</a>
-          {% if p %}
-            <span class="bar"><span style="width:{{ (100 * p.cursor / p.total_rows)|round(1) if p.total_rows else 0 }}%"></span></span>
-            <span class="runmeta">
-              rows {{ p.cursor }}/{{ p.total_rows }}
-              · {{ p.images }} imgs
-              · <span class="ok">{{ p.done }} done</span>
-              {% if p.ready or p.processing %} · {{ p.ready + p.processing }} pending{% endif %}
-              {% if p.error %} · <span class="err">{{ p.error }} err</span>{% endif %}
-            </span>
-            <span class="runactions">
-              {% if p.complete %}<span class="tag">complete</span>
-              {% else %}<a class="resume" href="/collect?csv={{ it.name }}">resume ▸</a>{% endif %}
-              <form method="post" action="/cancel" class="cancel-form"
-                    onsubmit="return confirm('Cancel this run? Clears its progress and queue. Already-downloaded images in out/ are kept.')">
-                <input type="hidden" name="csv" value="{{ it.name }}">
-                <button type="submit" class="cancel-run" title="Forget this run">cancel</button>
-              </form>
-            </span>
-          {% else %}
-            <span class="runmeta muted">not started</span>
-          {% endif %}
-        </li>
-      {% else %}
-        <li class="muted">no .csv files in data/</li>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zoopipe — {{ title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body data-csv="{{ name }}">
+  <header class="top">
+    <a class="brand" href="/">zoopipe</a>
+    <a class="back" href="/">‹ categories</a>
+    <form class="csvpick" method="get" action="/">
+      <select name="csv" onchange="this.form.submit()">
+        {% for c in csvs %}
+          <option value="{{ c }}" {% if c == name %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    <nav class="tabs">
+      {% set tabs = [('all','All',counts.all),('todo','To do',counts.todo),
+                     ('working','Working',counts.working),('done','Done',counts.done),
+                     ('uploaded','Uploaded',counts.uploaded)] %}
+      {% for key, label, n in tabs %}
+        <a href="/?csv={{ name }}&filter={{ key }}"
+           class="{{ 'on' if filter == key else '' }}">{{ label }} <b>{{ n }}</b></a>
       {% endfor %}
-    </ul>
-  </div>
-{% endblock %}
+    </nav>
+    <div class="pill" id="pill" hidden><span class="spin"></span> <span id="pill-txt"></span></div>
+  </header>
+
+  <main class="grid" id="grid">
+    {% for c in cards %}
+      <article class="card state-{{ c.state }}" data-idpr="{{ c.idpr }}"
+               data-name="{{ c.name }}" data-latin="{{ c.latin }}" data-state="{{ c.state }}">
+        <div class="cleft">
+          <div class="chead">
+            <span class="cname">{{ c.name }}</span>
+            <span class="clatin">{{ c.latin }}</span>
+          </div>
+          <button type="button" class="searchbtn" data-search>Search ▸</button>
+        </div>
+        <div class="frames" data-frames></div>
+        <div class="panel" data-panel hidden></div>
+      </article>
+    {% else %}
+      <p class="empty">Nothing here{% if filter != 'all' %} in “{{ filter }}”{% endif %}.</p>
+    {% endfor %}
+  </main>
+
+  <nav class="pager">
+    {% if page > 1 %}<a href="/?csv={{ name }}&filter={{ filter }}&page={{ page - 1 }}">‹ prev</a>
+    {% else %}<span class="off">‹ prev</span>{% endif %}
+    <span class="pmeta">page {{ page }} / {{ pages }} · {{ total }} species</span>
+    {% if page < pages %}<a href="/?csv={{ name }}&filter={{ filter }}&page={{ page + 1 }}">next ›</a>
+    {% else %}<span class="off">next ›</span>{% endif %}
+  </nav>
+
+  <dialog id="editor" class="editor">
+    <img id="ed-img" alt="">
+    <label class="rot">Rotate <output id="ed-deg">0</output>°
+      <input type="range" id="ed-rot" min="-180" max="180" value="0" step="1"></label>
+    <div class="edbtns">
+      <button type="button" id="ed-mirror" class="ghost">⇋ Mirror</button>
+      <span class="grow"></span>
+      <button type="button" id="ed-cancel" class="ghost">Cancel</button>
+      <button type="button" id="ed-save">Save</button>
+    </div>
+  </dialog>
+
+  <dialog id="lightbox" class="lightbox"><img alt=""></dialog>
+
+  <script id="photos-data" type="application/json">{{ photos_json|safe }}</script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

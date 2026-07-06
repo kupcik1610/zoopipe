@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zoopipe — {{ title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">zoopipe</div>
+    <span class="topnote">pick a category to start</span>
+  </header>
+
+  <main class="cats">
+    {% for c in cats %}
+      {% set filled = c.uploaded + c.done %}
+      <a class="cat" href="/?csv={{ c.file }}">
+        <span class="cat-name">{{ c.label }}</span>
+        <span class="cat-meta">{{ c.rows }} species</span>
+        <span class="cat-bar"><span style="width:{{ (100 * filled / c.rows)|round if c.rows else 0 }}%"></span></span>
+        <span class="cat-nums">
+          {% if c.uploaded %}<b class="up">{{ c.uploaded }}</b> uploaded{% endif %}
+          {% if c.done %}<b>{{ c.done }}</b> done{% endif %}
+          {% if c.working %}<b class="wk">{{ c.working }}</b> working{% endif %}
+          {% if not filled and not c.working %}not started{% endif %}
+        </span>
+      </a>
+    {% else %}
+      <p class="empty">No CSV files in data/.</p>
+    {% endfor %}
+  </main>
+</body>
+</html>

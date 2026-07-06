@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-"""Single background worker: turn picked images into finished catalogue frames.
+"""Turn picked images into finished catalogue frames.
 
-Drains `ready` photos from the ledger one at a time: download the original,
-background-remove it (imaging.make_frame), write the white frame, mark it done.
-One worker is plenty -- ~10s/image keeps up while you keep picking. A pidfile
-guards against two running at once; on start any half-done job is reset to ready.
-
-The web app's Process button just adds `ready` rows and calls spawn (see app.py).
-The worker loads the ~1GB model lazily on its first job, then stays alive and
-idle-polls so later jobs reuse it, exiting only after IDLE_TIMEOUT idle seconds.
+`run()` takes `ready` photos from the ledger one at a time: download the
+original, background-remove it (imaging.make_frame), write the white frame, mark
+it done. app.py runs this in a background thread; it can also be run standalone:
 
     .venv/bin/python worker.py
 """
@@ -20,7 +15,6 @@ import imaging
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(BASE_DIR, "out")
 UA = "ryby-fish-catalog/1.0 (contact: kupco.patrik.16@gmail.com)"
-IDLE_TIMEOUT = float(os.environ.get("WORKER_IDLE_TIMEOUT", "300"))
 
 
 def log(msg):
@@ -75,34 +69,23 @@ def process_one(p):
     return "done", frame_rel, secs, ", ".join(notes) or "saved"
 
 
-def main():
-    db.init()
-    if not db.acquire_lock():
-        log("a worker is already running; exiting.")
-        return
-    try:
-        reset = db.reset_stale()
-        if reset:
-            log(f"reset {reset} stale job(s) -> ready")
-        log(f"draining queue (model '{imaging.REMBG_MODEL}'; first job loads it)…")
-        done = 0
-        last_work = time.time()
-        while True:
-            p = db.claim_photo()
-            if not p:
-                if time.time() - last_work > IDLE_TIMEOUT:
-                    break
-                time.sleep(1.0)
-                continue
-            status, frame, secs, notes = process_one(p)
-            db.finish_photo(p["id"], status, frame_path=frame, secs=secs, notes=notes)
-            done += 1
-            last_work = time.time()
-            log(f"#{p['id']} {p['species']}: {status} ({secs}s) {notes}")
-        log(f"idle {int(IDLE_TIMEOUT)}s; exiting (processed {done} this run).")
-    finally:
-        db.release_lock()
+def run():
+    """Process `ready` photos one at a time, forever. Any photo left mid-flight
+    (still 'processing' after a restart) is put back to 'ready' first."""
+    reset = db.reset_stale()
+    if reset:
+        log(f"reset {reset} stale job(s) -> ready")
+    log(f"draining queue (model '{imaging.REMBG_MODEL}'; first job loads it)…")
+    while True:
+        p = db.claim_photo()
+        if not p:
+            time.sleep(1.0)
+            continue
+        status, frame, secs, notes = process_one(p)
+        db.finish_photo(p["id"], status, frame_path=frame, secs=secs, notes=notes)
+        log(f"#{p['id']} {p['species']}: {status} ({secs}s) {notes}")
 
 
 if __name__ == "__main__":
-    main()
+    db.init()
+    run()

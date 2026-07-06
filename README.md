@@ -18,8 +18,9 @@ zavrieť a pokračovať.
 2. **Search** na karte → inline sa spustí DuckDuckGo image search (podľa latinského
    názvu; text sa dá upraviť a hľadať znova). **Klikni** na fotky, ktoré chceš.
 3. **Process** → hneď sa vráti, panel sa zavrie a môžeš ísť na ďalší druh. Na pozadí
-   jeden **worker** (`worker.py`) fotku stiahne, cez **birefnet** (rembg) odstráni
-   pozadie a uloží plát do `out/<csv>/<idpr>_<druh>/`. Karty sa dopĺňajú naživo.
+   jeden **worker** (vlákno v appke, `worker.run`) fotku stiahne, cez **birefnet**
+   (rembg) odstráni pozadie a uloží plát do `out/<csv>/<idpr>_<druh>/`. Karty sa
+   dopĺňajú naživo.
 4. Pri hotovom pláte: **edit** (otočiť/zrkadliť, vždy sa vycentruje) a **upload**
    (na produkt v MiniZOO cez `upload.py`, `cookie.txt` musí byť prihlásený).
 
@@ -34,8 +35,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 Model na odstránenie pozadia (~1 GB) sa stiahne sám pri prvom spracovaní; prvá
-fotka preto chvíľu trvá. Worker sa spúšťa automaticky pri Process, dá sa spustiť
-aj ručne (spracuje frontu a skončí):
+fotka preto chvíľu trvá. Worker beží nonstop ako jedno vlákno vnútri appky —
+netreba ho spúšťať zvlášť. Na debug sa dá pustiť aj samostatne (drení frontu
+donekonečna):
 
 ```bash
 .venv/bin/python worker.py
@@ -51,7 +53,7 @@ python3 parse/parse.py         # číta parse/page*.html → data/*.csv
 | súbor | čo robí |
 |---|---|
 | `app.py` | Flask: galéria, `/search`, `/process`, `/status`, `/edit`, `/upload` |
-| `worker.py` | jeden proces: stiahni → odstráň pozadie → ulož plát |
+| `worker.py` | worker vlákno (`run`): stiahni → odstráň pozadie → ulož plát |
 | `db.py` | SQLite, jedna tabuľka `photos` (ready→processing→done/error) |
 | `imaging.py` | rembg cut-out + biely rámik |
 | `upload.py` | verné nahratie fotky na produkt MiniZOO |

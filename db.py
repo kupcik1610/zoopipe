@@ -2,13 +2,11 @@
 """Tiny SQLite state: one table, `photos`.
 
 Each picked image is one row that moves ready -> processing -> done | error.
-The gallery is just the CSV's rows joined to these by product id (idpr); there
-are no runs, batches or cursors -- you work species in any order and your place
-is implied by which photos exist. A single background worker (worker.py) drains
-`ready` rows: it downloads the original, background-removes it, and marks it done.
+The gallery is just the CSV's rows joined to these by product id (idpr); you work
+species in any order and your place is implied by which photos exist.
 
-Web app and worker both open short-lived connections (WAL + busy timeout), so
-concurrent access is safe.
+Connections are short-lived (WAL + busy timeout) so many can touch the DB at
+once; `claim_photo` uses BEGIN IMMEDIATE so a row is only ever picked up once.
 """
 import os, sqlite3, time
 from contextlib import contextmanager
@@ -16,7 +14,6 @@ from contextlib import contextmanager
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(BASE_DIR, "out")
 DB_PATH = os.path.join(OUT_DIR, "jobs.sqlite")
-LOCK_PATH = os.path.join(OUT_DIR, "worker.lock")
 
 STATUSES = ("ready", "processing", "done", "error")
 
@@ -149,38 +146,8 @@ def photos_for_csv(csv):
 
 
 def reset_stale():
-    """On worker start, return half-done 'processing' rows to 'ready'."""
+    """Return any half-done 'processing' rows to 'ready' (called on startup)."""
     with _db() as con:
         con.execute("UPDATE photos SET status='ready', updated_at=? WHERE status='processing'",
                     (_now(),))
         return con.total_changes
-
-
-# ---- worker lock ------------------------------------------------------------
-def worker_running():
-    try:
-        with open(LOCK_PATH) as f:
-            pid = int(f.read().strip())
-    except Exception:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-
-
-def acquire_lock():
-    os.makedirs(OUT_DIR, exist_ok=True)
-    if worker_running():
-        return False
-    with open(LOCK_PATH, "w") as f:
-        f.write(str(os.getpid()))
-    return True
-
-
-def release_lock():
-    try:
-        os.remove(LOCK_PATH)
-    except OSError:
-        pass

@@ -65,8 +65,6 @@ WorkingDirectory=$APP_HOME/app
 Environment=HOST=127.0.0.1
 Environment=PORT=5001
 Environment=APP_KEY=$APP_KEY
-Environment=WORKER_CONCURRENCY=8
-Environment=WORKER_THREADS=8
 ExecStart=$APP_HOME/venv/bin/python $APP_HOME/app/app.py
 Restart=always
 RestartSec=3

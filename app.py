@@ -3,8 +3,8 @@
 
 One screen: a gallery of every species in a CSV. Click a card to search
 DuckDuckGo for that species, tick the photos you want, Process. Picking never
-blocks -- Process just queues the photos and returns; a single background worker
-(worker.py) downloads + background-removes them, and the cards fill in live.
+blocks -- Process just queues the photos and returns; a background thread
+(worker.run) downloads + background-removes them and the cards fill in live.
 Finished frames can be nudged (rotate/mirror) and uploaded to minizoo.
 
 State lives in out/jobs.sqlite (one `photos` row per picked image), so you can
@@ -13,7 +13,7 @@ close the app and pick any CSV back up exactly where you left off.
   .venv/bin/python app.py                 # http://127.0.0.1:5001
   FLASK_DEBUG=1 .venv/bin/python app.py   # local dev: reloader + debugger
 """
-import csv, json, os, re, sys, time, subprocess
+import csv, json, os, re, threading, time
 
 from flask import (Flask, request, render_template, abort,
                    send_from_directory, redirect, jsonify, Response)
@@ -22,6 +22,7 @@ from ddgs import DDGS
 import db
 import imaging
 import upload
+import worker
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -102,12 +103,9 @@ def resolve_out(rel):
     return path
 
 
-def spawn_worker():
-    if db.worker_running():
-        return
-    with open(os.path.join(OUT_DIR, "worker.log"), "a") as logf:
-        subprocess.Popen([sys.executable, os.path.join(BASE_DIR, "worker.py")],
-                         cwd=BASE_DIR, stdout=logf, stderr=logf)
+def start_worker():
+    """Run worker.run() in a background thread that lives for the app's lifetime."""
+    threading.Thread(target=worker.run, name="worker", daemon=True).start()
 
 
 def image_search(query, max_results=20, retries=2):
@@ -124,8 +122,8 @@ def image_search(query, max_results=20, retries=2):
 
 
 def photo_dict(p):
-    return {"id": p["id"], "idpr": p["idpr"], "status": p["status"],
-            "frame": p["frame_path"], "orig": p["orig_path"],
+    return {"id": p["id"], "idpr": p["idpr"], "species": p["species"],
+            "status": p["status"], "frame": p["frame_path"], "orig": p["orig_path"],
             "secs": p["secs"], "notes": p["notes"],
             "uploaded": bool(p["uploaded_at"])}
 
@@ -243,8 +241,8 @@ def search():
 
 @app.post("/process")
 def process():
-    """Queue the ticked images for a species. Returns instantly; worker does the
-    heavy lifting. Body: csv, idpr, urls[] (one per ticked image)."""
+    """Queue the ticked images for a species and return instantly; they get
+    downloaded and framed in the background. Body: csv, idpr, urls[]."""
     name = request.form.get("csv", "")
     idpr = (request.form.get("idpr") or "").strip()
     urls = [u for u in request.form.getlist("url") if u.strip()]
@@ -261,7 +259,6 @@ def process():
     for u in urls:
         pid = db.add_photo(name, idpr, display, query, folder, u)
         added.append(pid)
-    spawn_worker()
     return jsonify({"ok": True, "ids": added})
 
 
@@ -271,13 +268,12 @@ def status():
     name = request.args.get("csv", "")
     photos = [photo_dict(p) for p in db.photos_for_csv(name)]
     active = any(p["status"] in ("ready", "processing") for p in photos)
-    return jsonify({"photos": photos, "worker": db.worker_running(), "active": active})
+    return jsonify({"photos": photos, "active": active})
 
 
 @app.post("/retry")
 def retry():
     db.retry_photo(request.form.get("id", 0, type=int))
-    spawn_worker()
     return ("", 204)
 
 
@@ -342,6 +338,9 @@ def _serve():
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "5001"))
     debug = os.environ.get("FLASK_DEBUG") == "1"
+    # under the debug reloader, only the child that serves should start it
+    if not debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        start_worker()
     print(f"\n  zoopipe -> http://{host}:{port}\n")
     app.run(host=host, port=port, debug=debug)
 

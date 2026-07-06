@@ -75,6 +75,18 @@ function renderCard(card) {
   card.className = "card state-" + st;
   const sb = card.querySelector("[data-search]");
   sb.textContent = list.length ? "Search again" : "Search ▸";
+
+  const sum = card.querySelector("[data-sum]");
+  if (sum) sum.textContent = list.length
+    ? list.length + (list.length === 1 ? " photo" : " photos") : "empty";
+}
+
+// ---- collapse / expand a card ----------------------------------------------
+function toggleCard(card, collapse) {
+  if (collapse === undefined) collapse = !card.classList.contains("collapsed");
+  card.classList.toggle("collapsed", collapse);
+  const head = card.querySelector("[data-toggle]");
+  if (head) head.setAttribute("aria-expanded", String(!collapse));
 }
 
 function signature(idpr) {
@@ -96,22 +108,22 @@ function recount() {
 }
 
 // ---- search panel -----------------------------------------------------------
-function togglePanel(card) {
+// The top "Search"/"Search again" button opens the panel (if needed) and runs
+// a fresh search on every click.
+function searchCard(card) {
+  toggleCard(card, false);   // Search from the header expands the card open
   const panel = card.querySelector("[data-panel]");
-  if (!panel.hidden) { panel.hidden = true; return; }
   panel.hidden = false;
   if (!panel.dataset.loaded) {
-    const q = card.dataset.latin || card.dataset.name;
     panel.innerHTML =
-      `<div class="ptools"><input class="pq" value="${q.replace(/"/g, "&quot;")}">` +
-      `<button type="button" class="pgo">go</button></div>` +
       `<div class="presults muted">searching…</div>` +
       `<button type="button" class="pmore" hidden>Search more</button>` +
       `<div class="pfoot"><button type="button" class="pproc" disabled>Process</button>` +
       `<span class="pcount"></span></div>`;
     panel.dataset.loaded = "1";
-    runSearch(card);
   }
+  runSearch(card);
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function resTile(res) {
@@ -121,13 +133,15 @@ function resTile(res) {
   t.innerHTML =
     `<img src="${res.thumb}" loading="lazy" alt="">` +
     `<button type="button" class="zoom" data-src="${res.image}" title="view full">⛶</button>` +
-    `<figcaption>${res.w || "?"}×${res.h || "?"}</figcaption>`;
+    `<figcaption>${res.w || "?"}×${res.h || "?"}` +
+    (res.url ? ` · <a class="src" href="${res.url}" target="_blank" rel="noopener">${res.source || "source"} ↗</a>` : "") +
+    `</figcaption>`;
   return t;
 }
 
 async function runSearch(card) {
   const panel = card.querySelector("[data-panel]");
-  const q = panel.querySelector(".pq").value.trim();
+  const q = (card.dataset.latin || card.dataset.name || "").trim();
   const box = panel.querySelector(".presults");
   const more = panel.querySelector(".pmore");
   more.hidden = true;
@@ -156,7 +170,7 @@ async function moreSearch(card) {
   const panel = card.querySelector("[data-panel]");
   const box = panel.querySelector(".presults");
   const more = panel.querySelector(".pmore");
-  const q = panel.querySelector(".pq").value.trim();
+  const q = (card.dataset.latin || card.dataset.name || "").trim();
   const want = (+panel.dataset.max || 20) + 20;
   panel.dataset.max = want;
   more.disabled = true;
@@ -201,6 +215,7 @@ async function processCard(card) {
   panel.innerHTML = "";
   renderCard(card);
   card.dataset.sig = signature(idpr);
+  card.scrollIntoView({ block: "nearest" });   // panel collapsed — keep card in view
   recount();
   ensurePolling();
 }
@@ -211,6 +226,16 @@ async function poll() {
   try {
     data = await (await fetch("/status?csv=" + encodeURIComponent(CSV))).json();
   } catch (e) { return; }
+
+  // notify on any photo that just crossed into done (was in flight last poll)
+  data.photos.forEach((p) => {
+    const was = prevStatus[p.id];
+    if (p.status === "done" && was && was !== "done" && !notified.has(p.id)) {
+      notified.add(p.id);
+      toastDone(p);
+    }
+    prevStatus[p.id] = p.status;
+  });
 
   const byIdpr = {};
   data.photos.forEach((p) => (byIdpr[p.idpr] = byIdpr[p.idpr] || []).push(p));
@@ -239,6 +264,34 @@ async function poll() {
 }
 function ensurePolling() {
   if (!pollTimer) pollTimer = setInterval(poll, 1500);
+}
+
+// ---- completion toasts ------------------------------------------------------
+const prevStatus = {};        // photo id -> status seen on the previous poll
+const notified = new Set();   // photo ids we've already toasted
+const toasts = document.getElementById("toasts");
+
+function jumpToCard(idpr) {
+  const card = grid.querySelector(`.card[data-idpr="${CSS.escape(idpr)}"]`);
+  if (card) {
+    toggleCard(card, false);   // make sure it's open before we jump to it
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+    card.classList.remove("flash"); void card.offsetWidth; card.classList.add("flash");
+  } else {
+    // it's on another page/filter — load the Done view anchored to it
+    location.href = `/?csv=${encodeURIComponent(CSV)}&filter=done#card-${idpr}`;
+  }
+}
+
+function toastDone(p) {
+  const t = document.createElement("button");
+  t.className = "toast";
+  t.innerHTML =
+    (p.frame ? `<img src="/out/${p.frame}" alt="">` : "") +
+    `<span class="tmsg"><b>${p.species || "Photo"}</b> ready<small>click to view</small></span>`;
+  t.onclick = () => { jumpToCard(p.idpr); t.remove(); };
+  toasts.appendChild(t);
+  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 400); }, 6000);
 }
 
 // ---- editor + lightbox ------------------------------------------------------
@@ -285,13 +338,14 @@ grid.addEventListener("click", async (e) => {
   const card = e.target.closest(".card");
   if (!card) return;
 
-  if (e.target.closest("[data-search]")) return togglePanel(card);
-  if (e.target.closest(".pgo")) return runSearch(card);
+  if (e.target.closest("[data-toggle]")) return;   // header row no longer collapses
+  if (e.target.closest("[data-search]")) return searchCard(card);
   if (e.target.closest(".pmore")) return moreSearch(card);
   if (e.target.closest(".pproc")) return processCard(card);
 
   const res = e.target.closest(".res");
   if (res) {
+    if (e.target.closest(".src")) return;          // let the source link open
     if (e.target.closest(".zoom")) return openLightbox(e.target.closest(".zoom").dataset.src);
     res.classList.toggle("picked");
     return updatePicked(card);
@@ -326,12 +380,6 @@ grid.addEventListener("click", async (e) => {
   }
 });
 
-grid.addEventListener("keydown", (e) => {
-  if (e.target.classList.contains("pq") && e.key === "Enter") {
-    e.preventDefault(); runSearch(e.target.closest(".card"));
-  }
-});
-
 // ---- boot -------------------------------------------------------------------
 grid.querySelectorAll(".card").forEach((card) => {
   renderCard(card);
@@ -339,3 +387,27 @@ grid.querySelectorAll(".card").forEach((card) => {
 });
 recount();
 poll();   // sync the whole-CSV "processing" pill and self-start polling if active
+
+// arriving from a "ready" toast on another page -> scroll to & flash that card
+if (location.hash.startsWith("#card-")) {
+  const card = document.getElementById(location.hash.slice(1));
+  if (card) {
+    toggleCard(card, false);
+    card.scrollIntoView({ block: "start" });
+    card.classList.add("flash");
+  }
+}
+
+// ---- back to top ------------------------------------------------------------
+const toTop = document.getElementById("totop");
+window.addEventListener("scroll", () => { toTop.hidden = window.scrollY < 400; }, { passive: true });
+toTop.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+
+// ---- collapse / expand all --------------------------------------------------
+const collapseAllBtn = document.getElementById("collapse-all");
+collapseAllBtn.onclick = () => {
+  const cards = [...grid.querySelectorAll(".card")];
+  const anyOpen = cards.some((c) => !c.classList.contains("collapsed"));
+  cards.forEach((c) => toggleCard(c, anyOpen));
+  collapseAllBtn.textContent = anyOpen ? "Expand all" : "Collapse all";
+};

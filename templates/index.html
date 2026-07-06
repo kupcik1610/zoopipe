@@ -26,22 +26,36 @@
            class="{{ 'on' if filter == key else '' }}">{{ label }} <b>{{ n }}</b></a>
       {% endfor %}
     </nav>
-    <div class="pill" id="pill" hidden><span class="spin"></span> <span id="pill-txt"></span></div>
+    <div class="hright">
+      <button type="button" id="collapse-all" class="collapse-all">Expand all</button>
+      <div class="prog" title="{{ counts.uploaded }} of {{ counts.all }} species uploaded">
+        <div class="progbar"><span style="width: {{ (counts.uploaded / counts.all * 100) if counts.all else 0 }}%"></span></div>
+        <span class="progtxt">{{ counts.uploaded }}/{{ counts.all }} uploaded</span>
+      </div>
+      <div class="pill" id="pill" hidden><span class="spin"></span> <span id="pill-txt"></span></div>
+    </div>
   </header>
 
   <main class="grid" id="grid">
     {% for c in cards %}
-      <article class="card state-{{ c.state }}" data-idpr="{{ c.idpr }}"
+      <article class="card collapsed state-{{ c.state }}" id="card-{{ c.idpr }}" data-idpr="{{ c.idpr }}"
                data-name="{{ c.name }}" data-latin="{{ c.latin }}" data-state="{{ c.state }}">
-        <div class="cleft">
-          <div class="chead">
-            <span class="cname">{{ c.name }}</span>
-            <span class="clatin">{{ c.latin }}</span>
-          </div>
+        <div class="chead">
           <button type="button" class="searchbtn" data-search>Search ▸</button>
+          <button type="button" class="ctoggle" data-toggle aria-expanded="false">
+            <span class="ctitle">
+              <span class="cname">{{ c.name }}</span>
+              <span class="clatin">{{ c.latin }}</span>
+            </span>
+          </button>
+          <span class="csum" data-sum></span>
         </div>
-        <div class="frames" data-frames></div>
-        <div class="panel" data-panel hidden></div>
+        <div class="cbody-wrap">
+          <div class="cbody">
+            <div class="frames" data-frames></div>
+            <div class="panel" data-panel hidden></div>
+          </div>
+        </div>
       </article>
     {% else %}
       <p class="empty">Nothing here{% if filter != 'all' %} in “{{ filter }}”{% endif %}.</p>
@@ -69,6 +83,10 @@
   </dialog>
 
   <dialog id="lightbox" class="lightbox"><img alt=""></dialog>
+
+  <button id="totop" class="totop" hidden aria-label="Back to top">↑</button>
+
+  <div id="toasts" class="toasts"></div>
 
   <script id="photos-data" type="application/json">{{ photos_json|safe }}</script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>

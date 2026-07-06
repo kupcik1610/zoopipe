@@ -16,13 +16,13 @@
                      ('uploaded','Uploaded',counts.uploaded)] %}
       {% for key, label, n in tabs %}
         <a href="/?csv={{ name }}&filter={{ key }}"
-           class="{{ 'on' if filter == key else '' }}">{{ label }} <b>{{ n }}</b></a>
+           class="{{ 'on' if filter == key else '' }}">{{ label }} <b data-count="{{ key }}">{{ n }}</b></a>
       {% endfor %}
     </nav>
     <div class="hright">
-      <div class="prog" title="{{ counts.uploaded }} of {{ counts.all }} species uploaded">
-        <div class="progbar"><span style="width: {{ (counts.uploaded / counts.all * 100) if counts.all else 0 }}%"></span></div>
-        <span class="progtxt">{{ counts.uploaded }}/{{ counts.all }} uploaded</span>
+      <div class="prog" id="prog" title="{{ counts.uploaded }} of {{ counts.all }} species uploaded">
+        <div class="progbar"><span id="progspan" style="width: {{ (counts.uploaded / counts.all * 100) if counts.all else 0 }}%"></span></div>
+        <span class="progtxt" id="progtxt">{{ counts.uploaded }}/{{ counts.all }} uploaded</span>
       </div>
       <div class="pill" id="pill" hidden><span class="spin"></span> <span id="pill-txt"></span></div>
     </div>

@@ -95,6 +95,29 @@ function recount() {
   } else pill.hidden = true;
 }
 
+// ---- live nav-bar totals (whole CSV, from the server) -----------------------
+// The tab counts and progress bar span the whole CSV, so we can't recompute
+// them from PHOTOS (only the current page is loaded). Refetch from the server.
+function applyCounts(counts) {
+  if (!counts) return;
+  document.querySelectorAll("[data-count]").forEach((b) => {
+    const key = b.dataset.count;
+    if (counts[key] != null) b.textContent = counts[key];
+  });
+  const span = document.getElementById("progspan");
+  const txt = document.getElementById("progtxt");
+  const prog = document.getElementById("prog");
+  if (span) span.style.width = (counts.all ? counts.uploaded / counts.all * 100 : 0) + "%";
+  if (txt) txt.textContent = counts.uploaded + "/" + counts.all + " uploaded";
+  if (prog) prog.title = counts.uploaded + " of " + counts.all + " species uploaded";
+}
+
+async function refreshCounts() {
+  try {
+    applyCounts(await (await fetch("/counts?csv=" + encodeURIComponent(CSV))).json());
+  } catch (e) { /* leave stale numbers rather than blank them */ }
+}
+
 // ---- search panel -----------------------------------------------------------
 // The top "Search"/"Search again" button opens the panel (if needed) and runs
 // a fresh search on every click.
@@ -191,6 +214,7 @@ async function processCard(card) {
   card.dataset.sig = signature(idpr);
   card.scrollIntoView({ block: "nearest" });   // panel just closed — keep card in view
   recount();
+  refreshCounts();
   ensurePolling();
 }
 
@@ -233,6 +257,7 @@ async function poll() {
     }
   });
   recount();
+  applyCounts(data.counts);
   if (data.active) ensurePolling();
   else if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
@@ -335,7 +360,7 @@ grid.addEventListener("click", async (e) => {
   if (kind === "upload") {
     act.disabled = true; act.textContent = "…";
     const data = await (await post("/upload", { id })).json();
-    if (data.ok) { findPhoto().uploaded = true; renderCard(card); card.dataset.sig = signature(card.dataset.idpr); recount(); }
+    if (data.ok) { findPhoto().uploaded = true; renderCard(card); card.dataset.sig = signature(card.dataset.idpr); recount(); refreshCounts(); }
     else { act.disabled = false; act.textContent = "upload"; alert(data.error || data.result); }
     return;
   }
@@ -347,7 +372,7 @@ grid.addEventListener("click", async (e) => {
   if (kind === "delete") {
     await post("/delete", { id });
     PHOTOS[card.dataset.idpr] = (PHOTOS[card.dataset.idpr] || []).filter((p) => p.id !== id);
-    renderCard(card); card.dataset.sig = signature(card.dataset.idpr); recount();
+    renderCard(card); card.dataset.sig = signature(card.dataset.idpr); recount(); refreshCounts();
     return;
   }
 });

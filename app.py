@@ -184,6 +184,15 @@ def category_summary():
 PER_PAGE = 25
 
 
+def tally_counts(cards):
+    """Nav-bar totals across the whole CSV (not just the current page)."""
+    tally = {"todo": 0, "working": 0, "done": 0, "uploaded": 0, "error": 0}
+    for c in cards:
+        tally[c["state"]] += 1
+    return {"all": len(cards), "todo": tally["todo"], "done": tally["done"],
+            "uploaded": tally["uploaded"], "working": tally["working"] + tally["error"]}
+
+
 # ---- pages ------------------------------------------------------------------
 @app.get("/")
 def index():
@@ -194,11 +203,7 @@ def index():
     flt = request.args.get("filter", "all")
     cards = build_cards(name)
 
-    tally = {"todo": 0, "working": 0, "done": 0, "uploaded": 0, "error": 0}
-    for c in cards:
-        tally[c["state"]] += 1
-    counts = {"all": len(cards), "todo": tally["todo"], "done": tally["done"],
-              "uploaded": tally["uploaded"], "working": tally["working"] + tally["error"]}
+    counts = tally_counts(cards)
 
     def keep(state):
         if flt == "all":
@@ -266,7 +271,15 @@ def status():
     name = request.args.get("csv", "")
     photos = [photo_dict(p) for p in db.photos_for_csv(name)]
     active = any(p["status"] in ("ready", "processing") for p in photos)
-    return jsonify({"photos": photos, "active": active})
+    return jsonify({"photos": photos, "active": active,
+                    "counts": tally_counts(build_cards(name))})
+
+
+@app.get("/counts")
+def counts():
+    """Nav-bar totals for the whole CSV — refetched after one-off changes."""
+    name = request.args.get("csv", "")
+    return jsonify(tally_counts(build_cards(name)))
 
 
 @app.post("/retry")

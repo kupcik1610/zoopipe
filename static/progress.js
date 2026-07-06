@@ -22,7 +22,7 @@
       actions = '<button type="button" class="retry" data-id="' + j.id + '">↻ retry</button>';
     }
     return '<td class="jt-thumb">' + thumb + '</td>' +
-           '<td class="jt-name">' + j.slug + ' <span class="muted">' + j.n + '</span></td>' +
+           '<td class="jt-name"><span class="muted">#' + j.n + '</span></td>' +
            '<td class="jt-status status-' + j.status + '">' + (ICON[j.status] || '') + ' ' + j.status + '</td>' +
            '<td class="jt-time">' + (j.secs != null ? j.secs + 's' : '—') + '</td>' +
            '<td class="jt-notes">' + (j.notes || '') + '</td>' +
@@ -41,11 +41,21 @@
 
     var rows = document.getElementById('jobrows');
     var byId = {};
-    d.jobs.forEach(function (j) { byId[j.id] = j; });
+    var groupTot = {}, groupDone = {};
+    d.jobs.forEach(function (j) {
+      byId[j.id] = j;
+      groupTot[j.slug] = (groupTot[j.slug] || 0) + 1;
+      if (j.status === 'done') groupDone[j.slug] = (groupDone[j.slug] || 0) + 1;
+    });
     // update existing rows in place
     Array.prototype.forEach.call(rows.querySelectorAll('tr[data-id]'), function (tr) {
       var j = byId[tr.getAttribute('data-id')];
       if (j) tr.innerHTML = rowHtml(j);
+    });
+    // refresh each species' done/total counter
+    Array.prototype.forEach.call(rows.querySelectorAll('[data-group-count]'), function (el) {
+      var s = el.getAttribute('data-group-count');
+      el.textContent = (groupDone[s] || 0) + '/' + (groupTot[s] || 0);
     });
 
     var state = document.getElementById('sum-state');

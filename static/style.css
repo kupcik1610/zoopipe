@@ -387,6 +387,14 @@ button.toggle.on:hover { background: var(--accent-d); }
   width: 64px; height: 48px; object-fit: contain; background: #fff;
   border: 1px solid var(--rule); border-radius: 3px; display: block;
 }
+/* one section per species: a shaded header row groups its photos below it */
+.grouphead td {
+  padding: 10px 10px 7px; border-bottom: 1px solid var(--rule-2);
+  background: var(--rule); position: sticky; top: 0;
+}
+.jobgroup + .jobgroup .grouphead td { border-top: 6px solid var(--paper); }
+.gh-name { font: 600 14px/1 var(--sans); }
+.gh-count { margin-left: 10px; font-size: 12px; }
 .jt-name { font-weight: 600; }
 .jt-time { color: var(--muted); white-space: nowrap; }
 .jt-notes { color: var(--muted); font-size: 12px; }

@@ -36,34 +36,42 @@
       </div>
     </div>
 
-    <table class="jobtable">
+    <table class="jobtable" id="jobrows">
       <thead>
-        <tr><th></th><th>species</th><th>status</th><th>time</th><th>notes</th><th>actions</th></tr>
+        <tr><th></th><th>photo</th><th>status</th><th>time</th><th>notes</th><th>actions</th></tr>
       </thead>
-      <tbody id="jobrows">
-        {% for j in jobs %}
-          <tr data-id="{{ j['id'] }}">
-            <td class="jt-thumb">
-              <img loading="lazy"{% if j['status'] == 'done' and j['plate_path'] %} data-rel="{{ j['plate_path'] }}"{% endif %}
-                   src="/out/{{ j['plate_path'] if (j['status'] == 'done' and j['plate_path']) else j['orig_path'] }}" alt="">
-            </td>
-            <td class="jt-name">{{ j['slug'] }} <span class="muted">{{ j['n'] }}</span></td>
-            <td class="jt-status status-{{ j['status'] }}">{{ j['status'] }}</td>
-            <td class="jt-time">{{ (j['secs']|string + 's') if j['secs'] else '—' }}</td>
-            <td class="jt-notes">{{ j['notes'] }}</td>
-            <td class="jt-actions">
-              {% if j['status'] == 'done' and j['plate_path'] %}
-                <button type="button" class="rowbtn view" data-full="/out/{{ j['plate_path'] }}">view</button>
-                <a class="rowbtn edit" href="/edit?img={{ j['plate_path'] }}">edit</a>
-              {% elif j['status'] == 'error' %}
-                <button type="button" class="retry" data-id="{{ j['id'] }}">↻ retry</button>
-              {% endif %}
+      {% for g in groups %}
+        <tbody class="jobgroup" data-group="{{ g['slug'] }}">
+          <tr class="grouphead">
+            <td colspan="6">
+              <span class="gh-name">{{ g['query'] }}</span>
+              <span class="gh-count muted" data-group-count="{{ g['slug'] }}">{{ g['done'] }}/{{ g['total'] }}</span>
             </td>
           </tr>
-        {% else %}
-          <tr><td colspan="6" class="muted">no images in this batch.</td></tr>
-        {% endfor %}
-      </tbody>
+          {% for j in g['jobs'] %}
+            <tr data-id="{{ j['id'] }}" data-slug="{{ g['slug'] }}">
+              <td class="jt-thumb">
+                <img loading="lazy"{% if j['status'] == 'done' and j['plate_path'] %} data-rel="{{ j['plate_path'] }}"{% endif %}
+                     src="/out/{{ j['plate_path'] if (j['status'] == 'done' and j['plate_path']) else j['orig_path'] }}" alt="">
+              </td>
+              <td class="jt-name"><span class="muted">#{{ j['n'] }}</span></td>
+              <td class="jt-status status-{{ j['status'] }}">{{ j['status'] }}</td>
+              <td class="jt-time">{{ (j['secs']|string + 's') if j['secs'] else '—' }}</td>
+              <td class="jt-notes">{{ j['notes'] }}</td>
+              <td class="jt-actions">
+                {% if j['status'] == 'done' and j['plate_path'] %}
+                  <button type="button" class="rowbtn view" data-full="/out/{{ j['plate_path'] }}">view</button>
+                  <a class="rowbtn edit" href="/edit?img={{ j['plate_path'] }}">edit</a>
+                {% elif j['status'] == 'error' %}
+                  <button type="button" class="retry" data-id="{{ j['id'] }}">↻ retry</button>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      {% else %}
+        <tbody><tr><td colspan="6" class="muted">no images in this batch.</td></tr></tbody>
+      {% endfor %}
     </table>
   </div>
 {% endblock %}

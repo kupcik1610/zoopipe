@@ -267,9 +267,13 @@ def reset_stale():
 
 
 def jobs_for_batch(csv, batch):
+    # order by row_index (CSV order) then id so a species' images sit together
+    # and in pick order -- the progress page groups on this to show one section
+    # per species instead of one flat list.
     with _db() as con:
         return con.execute(
-            "SELECT * FROM jobs WHERE csv=? AND batch=? ORDER BY id", (csv, batch)
+            "SELECT * FROM jobs WHERE csv=? AND batch=? ORDER BY row_index, id",
+            (csv, batch),
         ).fetchall()
 
 

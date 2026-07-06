@@ -234,6 +234,28 @@ def spawn_worker():
 
 
 # ---- run / batch helpers ----------------------------------------------------
+def group_jobs(jobs):
+    """Group a batch's jobs by species for the progress table, keeping the order
+    they arrive in (row_index, from jobs_for_batch). Returns a list of
+    {slug, query, jobs, done, total} -- one entry per species -- so the page can
+    show a header + per-species progress instead of one flat list. `query` is the
+    clean species name stored on each job (e.g. 'Boa constrictor')."""
+    groups = []
+    by_slug = {}
+    for j in jobs:
+        g = by_slug.get(j["slug"])
+        if g is None:
+            g = {"slug": j["slug"], "query": j["query"] or j["slug"],
+                 "jobs": [], "done": 0, "total": 0}
+            by_slug[j["slug"]] = g
+            groups.append(g)
+        g["jobs"].append(j)
+        g["total"] += 1
+        if j["status"] == "done":
+            g["done"] += 1
+    return groups
+
+
 def run_progress(name):
     """Summary dict for a CSV's run (or None if not started)."""
     run = db.get_run(name)
@@ -471,8 +493,8 @@ def progress():
     crumb = [(name, f"/configure?csv={name}"), (f"batch {batch}", None)]
     return render_template(
         "progress.html", title="processing", crumb=crumb, name=name,
-        batch=batch, jobs=jobs, counts=c, progress=run_progress(name),
-        confirmed=confirmed,
+        batch=batch, groups=group_jobs(jobs), counts=c,
+        progress=run_progress(name), confirmed=confirmed,
     )
 
 

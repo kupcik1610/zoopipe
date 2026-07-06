@@ -124,8 +124,7 @@ def image_search(query, max_results=20, retries=2):
 def photo_dict(p):
     return {"id": p["id"], "idpr": p["idpr"], "species": p["species"],
             "status": p["status"], "frame": p["frame_path"], "orig": p["orig_path"],
-            "secs": p["secs"], "notes": p["notes"],
-            "uploaded": bool(p["uploaded_at"])}
+            "notes": p["notes"], "uploaded": bool(p["uploaded_at"])}
 
 
 def build_cards(name):
@@ -182,13 +181,12 @@ def category_summary():
     return out
 
 
-PER_PAGE = 10
+PER_PAGE = 25
 
 
 # ---- pages ------------------------------------------------------------------
 @app.get("/")
 def index():
-    csvs = list_csvs()
     name = request.args.get("csv", "")
     if not name:
         return render_template("pick.html", title="categories",
@@ -217,7 +215,7 @@ def index():
 
     photos_json = json.dumps({c["idpr"]: c["photos"] for c in page_cards})
     return render_template(
-        "index.html", title=name, csvs=csvs, name=name, cards=page_cards,
+        "index.html", title=name, name=name, cards=page_cards,
         counts=counts, filter=flt, page=page, pages=pages, total=total,
         photos_json=photos_json)
 
@@ -321,7 +319,7 @@ def upload_image():
     nazov = (p["species"] or "").replace("/", "_").replace("\\", "_")
     fname = f"{p['idpr']}_{nazov}.jpg"
     try:
-        result = upload.upload_one(p["idpr"], src, verify=True, filename=fname)
+        result = upload.upload_one(p["idpr"], src, filename=fname)
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 502
     if result in ("ok", "dry"):

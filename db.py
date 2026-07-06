@@ -15,8 +15,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(BASE_DIR, "out")
 DB_PATH = os.path.join(OUT_DIR, "jobs.sqlite")
 
-STATUSES = ("ready", "processing", "done", "error")
-
 
 def _now():
     return int(time.time())

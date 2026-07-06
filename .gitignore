@@ -1,11 +1,4 @@
 # --- Secrets / credentials (NEVER commit) ---
-.env
-.env.*
-!.env.example
-vertex-key.json
-*-key.json
-*.pem
-service-account*.json
 # live minizoo session cookies (PHPSESSID, cf_clearance, …)
 cookie.txt
 
@@ -29,6 +22,3 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
-
-# --- bg-lab test output ---
-out_lab/

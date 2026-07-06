@@ -36,12 +36,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 Model na odstránenie pozadia (~1 GB) sa stiahne sám pri prvom spracovaní; prvá
 fotka preto chvíľu trvá. Worker beží nonstop ako jedno vlákno vnútri appky —
-netreba ho spúšťať zvlášť. Na debug sa dá pustiť aj samostatne (drení frontu
-donekonečna):
-
-```bash
-.venv/bin/python worker.py
-```
+netreba (ani sa nedá) ho spúšťať zvlášť.
 
 Preparsovať zdroj (ak CSV ešte nie je):
 ```bash

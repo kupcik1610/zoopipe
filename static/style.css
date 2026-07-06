@@ -20,11 +20,6 @@ button { font: inherit; cursor: pointer; }
 .brand { font-weight: 700; letter-spacing: .04em; color: inherit; text-decoration: none; }
 .back { color: var(--muted); text-decoration: none; font-size: 14px; }
 .back:hover { color: var(--ink); }
-.topnote { color: var(--muted); }
-.csvpick select {
-  font: inherit; padding: 5px 8px; border: 1px solid var(--line);
-  border-radius: 8px; background: #fff;
-}
 .tabs { display: flex; gap: 4px; }
 .tabs a {
   border: 1px solid transparent; background: none; color: var(--muted);
@@ -34,11 +29,6 @@ button { font: inherit; cursor: pointer; }
 .tabs a.on { color: var(--ink); background: #fff; border-color: var(--line); }
 .tabs b { font-weight: 700; margin-left: 3px; }
 .hright { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-.collapse-all {
-  border: 1px solid var(--line); background: #fff; color: var(--muted);
-  padding: 5px 10px; border-radius: 8px; font-size: 13px;
-}
-.collapse-all:hover { color: var(--ink); border-color: var(--muted); }
 .prog { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .progbar { width: 120px; height: 6px; background: #eee7db; border-radius: 4px; overflow: hidden; }
 .progbar span { display: block; height: 100%; background: var(--accent); transition: width .3s; }
@@ -67,41 +57,25 @@ button { font: inherit; cursor: pointer; }
 .card.state-done { border-color: #cfe3d6; }
 .card.state-uploaded { border-color: var(--accent); }
 .card.state-error { border-color: #eccac5; }
+/* closed card (no frames, search panel hidden) sits tight to its header */
+.card:has(.frames:empty):has(.panel[hidden]) { padding: 4px; }
+.card:has(.frames:empty):has(.panel[hidden]) .chead { padding-bottom: 0; }
 
 /* card header row — sticky within its own card so the species name stays pinned
-   (just under the main header) while you scroll that card. Holds the collapse
-   toggle (caret + name) on the left and the Search button on the right. */
+   (just under the main header) while you scroll that card. Holds the Search
+   button on the left and the species name beside it. */
 .chead {
   position: sticky; top: 52px; z-index: 5;
   display: flex; align-items: center; gap: 12px;
   background: var(--card); padding: 4px 0 10px;
 }
-.card:not(.collapsed) .chead { border-bottom: 1px solid var(--line); }
-.ctoggle {
-  flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 12px;
-  background: none; border: none; padding: 0; text-align: left; color: inherit;
-}
-.ctitle { display: flex; flex-direction: column; min-width: 0; }
+.ctitle { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .cname { font-weight: 600; font-size: 17px; }
 .clatin { font-style: italic; color: var(--muted); font-size: 14px; }
-.csum { margin-left: auto; color: var(--muted); font-size: 13px; white-space: nowrap; opacity: 0; transition: opacity .2s; }
-.card.collapsed .csum { opacity: 1; }
 
-/* collapsible body — grid-rows 1fr<->0fr gives a smooth height animation */
-.cbody-wrap {
-  display: grid; grid-template-rows: 1fr;
-  transition: grid-template-rows .28s ease;
-}
-.card.collapsed .cbody-wrap { grid-template-rows: 0fr; }
 .cbody {
-  overflow: hidden; min-height: 0;
-  display: grid; grid-template-columns: auto 1fr; gap: 16px; padding-top: 16px;
-  align-items: start;
+  display: flex; flex-direction: column;
 }
-.card.collapsed .cbody { padding-top: 0; }
-.cleft { grid-column: 1; }
-.cbody .frames { grid-column: 2; }
-.cbody .panel { grid-column: 1 / -1; }
 
 /* pager */
 .pager {

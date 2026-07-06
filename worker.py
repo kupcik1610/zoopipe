@@ -3,9 +3,7 @@
 
 `run()` takes `ready` photos from the ledger one at a time: download the
 original, background-remove it (imaging.make_frame), write the white frame, mark
-it done. app.py runs this in a background thread; it can also be run standalone:
-
-    .venv/bin/python worker.py
+it done. app.py runs this in a daemon thread that lives for the app's lifetime.
 """
 import os, time, urllib.request, urllib.error
 
@@ -19,6 +17,14 @@ UA = "ryby-fish-catalog/1.0 (contact: kupco.patrik.16@gmail.com)"
 
 def log(msg):
     print(f"[worker {time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def _write_out(rel, data):
+    """Write `data` to OUT_DIR/rel, creating parent dirs as needed."""
+    abs_path = os.path.join(OUT_DIR, rel)
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    with open(abs_path, "wb") as f:
+        f.write(data)
 
 
 def _download(url, timeout=30, retries=2):
@@ -39,33 +45,31 @@ def _download(url, timeout=30, retries=2):
 
 
 def process_one(p):
-    """Download + frame one photo. Returns (status, frame_rel, secs, notes)."""
+    """Download + frame one photo. Returns (status, frame_rel, secs, notes).
+
+    Never raises: every failure path (download, disk I/O, background removal) is
+    turned into an ('error', ...) result so the caller can always finish the job.
+    """
     try:
         raw = _download(p["source_url"])
+        if not imaging.is_image(raw):
+            return "error", "", None, "download: not an image"
     except Exception as e:
         return "error", "", None, f"download failed: {e}"
-    if not imaging.is_image(raw):
-        return "error", "", None, "download: not an image"
-
-    orig_rel = f"{p['folder']}/originals/{p['id']}.{imaging._ext(raw)}"
-    orig_abs = os.path.join(OUT_DIR, orig_rel)
-    os.makedirs(os.path.dirname(orig_abs), exist_ok=True)
-    with open(orig_abs, "wb") as f:
-        f.write(raw)
-    db.set_orig_path(p["id"], orig_rel)
 
     try:
+        orig_rel = f"{p['folder']}/originals/{p['id']}.{imaging._ext(raw)}"
+        _write_out(orig_rel, raw)
+        db.set_orig_path(p["id"], orig_rel)
+
         t0 = time.time()
         out, ext, notes = imaging.make_frame(raw)
         secs = round(time.time() - t0, 2)
+
+        frame_rel = f"{p['folder']}/{p['id']}.{ext}"
+        _write_out(frame_rel, out)
     except Exception as e:
         return "error", "", None, f"{type(e).__name__}: {e}"
-
-    frame_rel = f"{p['folder']}/{p['id']}.{ext}"
-    frame_abs = os.path.join(OUT_DIR, frame_rel)
-    os.makedirs(os.path.dirname(frame_abs), exist_ok=True)
-    with open(frame_abs, "wb") as f:
-        f.write(out)
     return "done", frame_rel, secs, ", ".join(notes) or "saved"
 
 
@@ -77,15 +81,17 @@ def run():
         log(f"reset {reset} stale job(s) -> ready")
     log(f"draining queue (model '{imaging.REMBG_MODEL}'; first job loads it)…")
     while True:
-        p = db.claim_photo()
-        if not p:
+        try:
+            p = db.claim_photo()
+            if not p:
+                time.sleep(1.0)
+                continue
+            status, frame, secs, notes = process_one(p)
+            db.finish_photo(p["id"], status, frame_path=frame, secs=secs, notes=notes)
+            log(f"#{p['id']} {p['species']}: {status} ({secs}s) {notes}")
+        except Exception as e:
+            # A dead worker freezes the whole queue, so never let the loop exit:
+            # log and retry. Anything left 'processing' is recovered by
+            # reset_stale() on the next restart.
+            log(f"loop error: {type(e).__name__}: {e}")
             time.sleep(1.0)
-            continue
-        status, frame, secs, notes = process_one(p)
-        db.finish_photo(p["id"], status, frame_path=frame, secs=secs, notes=notes)
-        log(f"#{p['id']} {p['species']}: {status} ({secs}s) {notes}")
-
-
-if __name__ == "__main__":
-    db.init()
-    run()

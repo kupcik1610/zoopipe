@@ -75,18 +75,6 @@ function renderCard(card) {
   card.className = "card state-" + st;
   const sb = card.querySelector("[data-search]");
   sb.textContent = list.length ? "Search again" : "Search ▸";
-
-  const sum = card.querySelector("[data-sum]");
-  if (sum) sum.textContent = list.length
-    ? list.length + (list.length === 1 ? " photo" : " photos") : "empty";
-}
-
-// ---- collapse / expand a card ----------------------------------------------
-function toggleCard(card, collapse) {
-  if (collapse === undefined) collapse = !card.classList.contains("collapsed");
-  card.classList.toggle("collapsed", collapse);
-  const head = card.querySelector("[data-toggle]");
-  if (head) head.setAttribute("aria-expanded", String(!collapse));
 }
 
 function signature(idpr) {
@@ -111,7 +99,6 @@ function recount() {
 // The top "Search"/"Search again" button opens the panel (if needed) and runs
 // a fresh search on every click.
 function searchCard(card) {
-  toggleCard(card, false);   // Search from the header expands the card open
   const panel = card.querySelector("[data-panel]");
   panel.hidden = false;
   if (!panel.dataset.loaded) {
@@ -122,7 +109,7 @@ function searchCard(card) {
       `<span class="pcount"></span></div>`;
     panel.dataset.loaded = "1";
   }
-  runSearch(card);
+  doSearch(card, false);
   card.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -139,54 +126,41 @@ function resTile(res) {
   return t;
 }
 
-async function runSearch(card) {
+const cardQuery = (card) => (card.dataset.latin || card.dataset.name || "").trim();
+
+// One search routine for both the first search and "Search more". DDG only
+// takes a result count (no offset), so "more" refetches a bigger page and
+// appends the tiles we don't already show; the first search replaces the box.
+async function doSearch(card, append) {
   const panel = card.querySelector("[data-panel]");
-  const q = (card.dataset.latin || card.dataset.name || "").trim();
   const box = panel.querySelector(".presults");
   const more = panel.querySelector(".pmore");
-  more.hidden = true;
-  box.className = "presults muted";
-  box.textContent = "searching…";
-  panel.dataset.max = 20;
+  const want = append ? (+panel.dataset.max || 20) + 20 : 20;
+  panel.dataset.max = want;
+
+  if (append) { more.disabled = true; more.textContent = "loading…"; }
+  else { more.hidden = true; box.className = "presults muted"; box.textContent = "searching…"; }
+
   try {
-    const data = await (await fetch("/search?q=" + encodeURIComponent(q) + "&max=20")).json();
-    if (data.error || !data.results.length) {
+    const data =
+      await (await fetch("/search?q=" + encodeURIComponent(cardQuery(card)) + "&max=" + want)).json();
+    if (!append && (data.error || !data.results.length)) {
       box.textContent = data.error || "no images";
       return;
     }
-    box.className = "presults";
-    box.innerHTML = "";
-    data.results.forEach((res) => box.appendChild(resTile(res)));
-    more.hidden = false;
-    more.disabled = false;
-    more.textContent = "Search more";
-    updatePicked(card);
-  } catch (e) {
-    box.textContent = "search failed";
-  }
-}
-
-async function moreSearch(card) {
-  const panel = card.querySelector("[data-panel]");
-  const box = panel.querySelector(".presults");
-  const more = panel.querySelector(".pmore");
-  const q = (card.dataset.latin || card.dataset.name || "").trim();
-  const want = (+panel.dataset.max || 20) + 20;
-  panel.dataset.max = want;
-  more.disabled = true;
-  more.textContent = "loading…";
-  try {
-    const data = await (await fetch("/search?q=" + encodeURIComponent(q) + "&max=" + want)).json();
     const have = new Set([...box.querySelectorAll(".res")].map((e) => e.dataset.url));
+    if (!append) { box.className = "presults"; box.innerHTML = ""; have.clear(); }
     let added = 0;
     (data.results || []).forEach((res) => {
       if (!have.has(res.image)) { box.appendChild(resTile(res)); added++; }
     });
-    if (added) { more.disabled = false; more.textContent = "Search more"; }
-    else { more.disabled = true; more.textContent = "no more results"; }
+    more.hidden = false;
+    if (append && !added) { more.disabled = true; more.textContent = "no more results"; }
+    else { more.disabled = false; more.textContent = "Search more"; }
+    updatePicked(card);
   } catch (e) {
-    more.disabled = false;
-    more.textContent = "Search more";
+    if (append) { more.disabled = false; more.textContent = "Search more"; }
+    else box.textContent = "search failed";
   }
 }
 
@@ -215,7 +189,7 @@ async function processCard(card) {
   panel.innerHTML = "";
   renderCard(card);
   card.dataset.sig = signature(idpr);
-  card.scrollIntoView({ block: "nearest" });   // panel collapsed — keep card in view
+  card.scrollIntoView({ block: "nearest" });   // panel just closed — keep card in view
   recount();
   ensurePolling();
 }
@@ -274,7 +248,6 @@ const toasts = document.getElementById("toasts");
 function jumpToCard(idpr) {
   const card = grid.querySelector(`.card[data-idpr="${CSS.escape(idpr)}"]`);
   if (card) {
-    toggleCard(card, false);   // make sure it's open before we jump to it
     card.scrollIntoView({ behavior: "smooth", block: "start" });
     card.classList.remove("flash"); void card.offsetWidth; card.classList.add("flash");
   } else {
@@ -338,9 +311,8 @@ grid.addEventListener("click", async (e) => {
   const card = e.target.closest(".card");
   if (!card) return;
 
-  if (e.target.closest("[data-toggle]")) return;   // header row no longer collapses
   if (e.target.closest("[data-search]")) return searchCard(card);
-  if (e.target.closest(".pmore")) return moreSearch(card);
+  if (e.target.closest(".pmore")) return doSearch(card, true);
   if (e.target.closest(".pproc")) return processCard(card);
 
   const res = e.target.closest(".res");
@@ -392,7 +364,6 @@ poll();   // sync the whole-CSV "processing" pill and self-start polling if acti
 if (location.hash.startsWith("#card-")) {
   const card = document.getElementById(location.hash.slice(1));
   if (card) {
-    toggleCard(card, false);
     card.scrollIntoView({ block: "start" });
     card.classList.add("flash");
   }
@@ -402,12 +373,3 @@ if (location.hash.startsWith("#card-")) {
 const toTop = document.getElementById("totop");
 window.addEventListener("scroll", () => { toTop.hidden = window.scrollY < 400; }, { passive: true });
 toTop.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
-
-// ---- collapse / expand all --------------------------------------------------
-const collapseAllBtn = document.getElementById("collapse-all");
-collapseAllBtn.onclick = () => {
-  const cards = [...grid.querySelectorAll(".card")];
-  const anyOpen = cards.some((c) => !c.classList.contains("collapsed"));
-  cards.forEach((c) => toggleCard(c, anyOpen));
-  collapseAllBtn.textContent = anyOpen ? "Expand all" : "Collapse all";
-};

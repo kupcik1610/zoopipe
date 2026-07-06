@@ -2,8 +2,8 @@
 """Cut the background out with rembg (birefnet-general) and fit the subject onto
 a white catalogue frame. Shared by app.py and the worker.
 
-alpha-matting + mask post-processing were tried (see bg_lab.py) and dropped --
-no visible gain over a plain birefnet mask plus the light edge feather below.
+alpha-matting + mask post-processing were tried and dropped -- no visible gain
+over a plain birefnet mask plus the light edge feather below.
 """
 from rembg import remove as _rembg_remove, new_session
 from PIL import Image, ImageFilter, ImageChops

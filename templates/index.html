@@ -10,13 +10,6 @@
   <header class="top">
     <a class="brand" href="/">zoopipe</a>
     <a class="back" href="/">‹ categories</a>
-    <form class="csvpick" method="get" action="/">
-      <select name="csv" onchange="this.form.submit()">
-        {% for c in csvs %}
-          <option value="{{ c }}" {% if c == name %}selected{% endif %}>{{ c }}</option>
-        {% endfor %}
-      </select>
-    </form>
     <nav class="tabs">
       {% set tabs = [('all','All',counts.all),('todo','To do',counts.todo),
                      ('working','Working',counts.working),('done','Done',counts.done),
@@ -27,7 +20,6 @@
       {% endfor %}
     </nav>
     <div class="hright">
-      <button type="button" id="collapse-all" class="collapse-all">Expand all</button>
       <div class="prog" title="{{ counts.uploaded }} of {{ counts.all }} species uploaded">
         <div class="progbar"><span style="width: {{ (counts.uploaded / counts.all * 100) if counts.all else 0 }}%"></span></div>
         <span class="progtxt">{{ counts.uploaded }}/{{ counts.all }} uploaded</span>
@@ -38,23 +30,18 @@
 
   <main class="grid" id="grid">
     {% for c in cards %}
-      <article class="card collapsed state-{{ c.state }}" id="card-{{ c.idpr }}" data-idpr="{{ c.idpr }}"
+      <article class="card state-{{ c.state }}" id="card-{{ c.idpr }}" data-idpr="{{ c.idpr }}"
                data-name="{{ c.name }}" data-latin="{{ c.latin }}" data-state="{{ c.state }}">
         <div class="chead">
           <button type="button" class="searchbtn" data-search>Search ▸</button>
-          <button type="button" class="ctoggle" data-toggle aria-expanded="false">
-            <span class="ctitle">
-              <span class="cname">{{ c.name }}</span>
-              <span class="clatin">{{ c.latin }}</span>
-            </span>
-          </button>
-          <span class="csum" data-sum></span>
+          <span class="ctitle">
+            <span class="cname">{{ c.name }}</span>
+            <span class="clatin">{{ c.latin }}</span>
+          </span>
         </div>
-        <div class="cbody-wrap">
-          <div class="cbody">
-            <div class="frames" data-frames></div>
-            <div class="panel" data-panel hidden></div>
-          </div>
+        <div class="cbody">
+          <div class="frames" data-frames></div>
+          <div class="panel" data-panel hidden></div>
         </div>
       </article>
     {% else %}
@@ -75,9 +62,9 @@
     <label class="rot">Rotate <output id="ed-deg">0</output>°
       <input type="range" id="ed-rot" min="-180" max="180" value="0" step="1"></label>
     <div class="edbtns">
-      <button type="button" id="ed-mirror" class="ghost">⇋ Mirror</button>
+      <button type="button" id="ed-mirror">⇋ Mirror</button>
       <span class="grow"></span>
-      <button type="button" id="ed-cancel" class="ghost">Cancel</button>
+      <button type="button" id="ed-cancel">Cancel</button>
       <button type="button" id="ed-save">Save</button>
     </div>
   </dialog>

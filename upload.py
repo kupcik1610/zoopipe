@@ -1,25 +1,11 @@
 #!/usr/bin/env python3
+"""Nahrá jednu upravenú fotku na produkt (idpr) na minizoo.let.is.
+
+Formulár sa ukladá celý, takže načítame edit formulár, verne zreprodukujeme
+všetky jeho polia a len pridáme fotku do poľa 'podklad'. Volá sa z app.py;
+prihlásenie cez cookie.txt. DRY=1 -> nič sa nepošle.
 """
-upload – nahrá jednu upravenú fotku (600×470) na produkt na minizoo.let.is.
-
-Pre daný produkt (idpr): načíta jeho edit formulár (?p3=sortiment_uprav&idpr=ID),
-VERNE zreprodukuje všetky jeho polia (nič nemení) a pridá novú fotku do poľa
-'podklad', potom POSTne uloženie. verify=True po uploade znova načíta polia a
-overí, že sa nezmenilo nič okrem fotky.
-
-Importuje sa z app.py (upload_one) – web app volá túto funkciu pri kliknutí na
-"upload" pri hotovej fotke v processing tabe. Prihlásenie ide cez cookie.txt.
-
-Ručný test z terminálu:
-    python3 upload.py test <idpr> <cesta_k_fotke>     # 1 produkt + diff polí
-    (DRY=1 python3 upload.py test ...  -> len ukáže čo by spravil, NEPOSIELA)
-
-Bezpečnostné poistky:
-  • 'delfile' (zmazať fotku) sa NIKDY neposiela
-  • checkbox/radio sa posiela len ak bol 'checked'; select podľa 'selected'
-  • po uploade sa polia znova načítajú a porovnajú -> nahlási akúkoľvek zmenu
-"""
-import os, sys, html as htmllib, mimetypes, urllib.request
+import os, html as htmllib, mimetypes, urllib.request
 from html.parser import HTMLParser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -35,7 +21,7 @@ SAVE_P3 = "sortiment_uprav_uloz"
 DRY = os.environ.get("DRY") == "1"
 
 
-# ---------- prihlásenie / HTTP (samostatné, netreba minizoo.py) ----------
+# ---------- prihlásenie / HTTP ----------
 def _cookie():
     if not os.path.exists(COOKIE_FILE):
         raise RuntimeError(f"Chýba {COOKIE_FILE}. Vlož doň Cookie reťazec z prehliadača.")
@@ -58,7 +44,7 @@ class FormSerializer(HTMLParser):
     def __init__(self):
         super().__init__()
         self.in_form = False
-        self.fields = []                # [(name, value)]
+        self.fields = []
         self.sel_name = None; self.sel_selected = False
         self.sel_first = None; self.sel_multiple = False
         self.opt_val = None; self.opt_buf = None
@@ -82,7 +68,7 @@ class FormSerializer(HTMLParser):
             elif t == "file":
                 pass                                    # fotku pridáme sami
             elif t == "image":
-                self.fields.append((n + ".x", "1"))     # klik na image submit
+                self.fields.append((n + ".x", "1"))
                 self.fields.append((n + ".y", "1"))
             elif t in ("submit", "button", "reset"):
                 pass
@@ -155,62 +141,24 @@ def post_multipart(url, fields, file_field, filename, filedata):
         return r.status, r.read()
 
 
-def _cmp_key(fields):
-    """Polia na porovnanie pred/po (bez fotky a bez volatilných submit súradníc)."""
-    return {n: v for n, v in fields if not n.endswith((".x", ".y")) and n != FILE_FIELD}
-
-
 # ---------- upload jednej fotky na jeden produkt ----------
-def upload_one(idpr, imgpath, verify=True, verbose=False, filename=None):
-    """Pridá fotku `imgpath` na produkt `idpr`. Vráti výsledok:
-    'ok' (nahrané, nič iné sa nezmenilo), 'changed' (nahrané, ale zmenili sa aj
-    iné polia – varovanie), 'dry' (DRY=1, neposlané) alebo 'HTTP <kód>'.
-    Chyby (login, nenájdený formulár, sieť) vyhodia výnimku."""
-    before = read_form(idpr)
+def upload_one(idpr, imgpath, filename=None):
+    """Pridá fotku k produktu. Vráti 'ok', 'dry' (DRY=1) alebo 'HTTP <kód>';
+    chyby (login/formulár/sieť) vyhodia výnimku."""
+    fields = read_form(idpr)
     with open(imgpath, "rb") as f:
         data = f.read()
     fname = filename or os.path.basename(imgpath)
     url = ENDPOINT + f"?p3=sortiment_uprav&idpr={idpr}"
 
-    # istota: p3 musí byť 'uloz', delfile sa nesmie posielať
-    fields = [(n, v) for n, v in before if n != "delfile"]
-    if not any(n == "p3" and v == SAVE_P3 for n, v in fields):
-        fields = [(n, v) for n, v in fields if n != "p3"] + [("p3", SAVE_P3)]
+    # delfile (zmazať fotku) sa nesmie poslať; p3 musí byť uloženie
+    fields = [(n, v) for n, v in fields if n not in ("delfile", "p3")] + [("p3", SAVE_P3)]
 
-    if DRY or verbose:
-        print(f"    polí: {len(fields)}  (fotka {fname}, {len(data)//1024} kB)")
     if DRY:
-        print("    DRY: neposielam.")
+        print(f"    DRY: neposielam ({len(fields)} polí, fotka {fname}, {len(data)//1024} kB)")
         return "dry"
 
     status, _ = post_multipart(url, fields, FILE_FIELD, fname, data)
     if status != 200:
         return f"HTTP {status}"
-
-    if verify:
-        after = read_form(idpr)
-        b, a = _cmp_key(before), _cmp_key(after)
-        changed = {k: (b.get(k), a.get(k)) for k in set(b) | set(a) if b.get(k) != a.get(k)}
-        if changed:
-            print(f"    ⚠ ZMENENÉ polia (okrem fotky): {len(changed)}")
-            for k, (ov, nv) in list(changed.items())[:12]:
-                print(f"       {k}: '{ov}' -> '{nv}'")
-            return "changed"
     return "ok"
-
-
-def main():
-    args = sys.argv[1:]
-    if len(args) == 3 and args[0] == "test":
-        idpr, img = args[1], args[2]
-        print(f"TEST upload idpr={idpr}  fotka={img}")
-        r = upload_one(idpr, img, verify=True, verbose=True)
-        print(f"výsledok: {r}")
-        if r == "ok":
-            print("✓ fotka nahraná, žiadne iné pole sa nezmenilo.")
-    else:
-        print(__doc__)
-
-
-if __name__ == "__main__":
-    main()

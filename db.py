@@ -266,6 +266,11 @@ def reset_stale():
         return con.total_changes
 
 
+def get_job(jid):
+    with _db() as con:
+        return con.execute("SELECT * FROM jobs WHERE id=?", (jid,)).fetchone()
+
+
 def jobs_for_batch(csv, batch):
     # order by row_index (CSV order) then id so a species' images sit together
     # and in pick order -- the progress page groups on this to show one section

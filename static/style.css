@@ -146,6 +146,10 @@ button.toggle.on:hover { background: var(--accent-d); }
   box-shadow: 0 6px 20px rgba(20, 18, 15, .22);
 }
 .process-fab:focus-visible { outline: 3px solid var(--tint); outline-offset: 2px; }
+.process-fab:disabled {
+  background: var(--rule-2); color: var(--muted); cursor: default;
+  box-shadow: none; opacity: .8;
+}
 .has-fab { padding-bottom: 84px; }
 
 /* ---- thumbnail grid ------------------------------------------------------ */
@@ -412,6 +416,12 @@ button.toggle.on:hover { background: var(--accent-d); }
 .rowbtn:hover { background: #0000000a; text-decoration: none; }
 .rowbtn.edit { color: var(--accent); border-color: var(--accent); }
 .rowbtn.edit:hover { background: var(--accent); color: #fff; }
+.rowbtn.upload { color: #fff; background: var(--accent); border-color: var(--accent-d); }
+.rowbtn.upload:hover { background: var(--accent-d); }
+.rowbtn.upload:disabled { opacity: .55; cursor: default; }
+.up-msg { font: 600 11px/1 var(--sans); margin-left: 4px; white-space: nowrap; }
+.up-msg.ok { color: var(--ok); }
+.up-msg.err { color: var(--err); }
 button.retry {
   font: 600 11px/1 var(--sans); padding: 5px 9px;
   background: transparent; color: var(--err); border: 1px solid var(--err); border-radius: 3px;

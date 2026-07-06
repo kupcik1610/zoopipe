@@ -36,6 +36,7 @@ from ddgs import DDGS
 
 import db
 import imaging
+import upload
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -544,6 +545,49 @@ def retry():
     db.retry_job(jid)
     spawn_worker()
     return redirect(f"/progress?csv={name}&batch={batch}")
+
+
+@app.post("/upload")
+def upload_image():
+    """Push one finished frame to its product on minizoo, via upload.py.
+
+    The product id (idpr the form needs) is the CSV row's `id` column, found via
+    the job's row_index. verify=True re-reads the form after saving and flags if
+    anything but the photo changed. Returns JSON the progress page shows inline.
+    Untested locally by design -- exercised in production."""
+    name = request.form.get("csv", "")
+    jid = request.form.get("id", 0, type=int)
+    job = db.get_job(jid)
+    if not job or job["csv"] != name:
+        return jsonify({"ok": False, "error": "job not found"}), 404
+    if job["status"] != "done" or not job["plate_path"]:
+        return jsonify({"ok": False, "error": "frame not finished"}), 400
+
+    _, rows = read_csv(name)
+    idx = job["row_index"]
+    if not (0 <= idx < len(rows)):
+        return jsonify({"ok": False, "error": "row out of range"}), 400
+    idpr = (rows[idx].get("id") or "").strip()
+    if not idpr:
+        return jsonify({"ok": False, "error": "row has no product id (id column)"}), 400
+
+    src = os.path.join(OUT_DIR, job["plate_path"])
+    if not os.path.isfile(src):
+        return jsonify({"ok": False, "error": "frame file missing on disk"}), 400
+
+    # match the server's own filename format: <idpr>_<nazov>.jpg (diacritics
+    # kept, e.g. 3644_Napajačka.jpg). Use the product's Slovak name; only strip
+    # path separators so it stays a single safe filename.
+    nazov = (rows[idx].get("nazov_sk") or job["query"] or "").strip()
+    nazov = nazov.replace("/", "_").replace("\\", "_")
+    fname = f"{idpr}_{nazov}.jpg"
+    try:
+        result = upload.upload_one(idpr, src, verify=True, filename=fname)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 502
+    # 'changed' = uploaded, but other form fields moved -> surface as not-ok so
+    # the user notices; everything else non-'ok' is a real failure.
+    return jsonify({"ok": result in ("ok", "dry"), "result": result, "idpr": idpr})
 
 
 @app.get("/edit")

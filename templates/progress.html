@@ -62,6 +62,7 @@
                 {% if j['status'] == 'done' and j['plate_path'] %}
                   <button type="button" class="rowbtn view" data-full="/out/{{ j['plate_path'] }}">view</button>
                   <a class="rowbtn edit" href="/edit?img={{ j['plate_path'] }}">edit</a>
+                  <button type="button" class="rowbtn upload" data-id="{{ j['id'] }}">upload</button>
                 {% elif j['status'] == 'error' %}
                   <button type="button" class="retry" data-id="{{ j['id'] }}">↻ retry</button>
                 {% endif %}

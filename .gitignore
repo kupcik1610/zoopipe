@@ -6,6 +6,8 @@ vertex-key.json
 *-key.json
 *.pem
 service-account*.json
+# live minizoo session cookies (PHPSESSID, cf_clearance, …)
+cookie.txt
 
 # --- Generated pipeline output ---
 out/

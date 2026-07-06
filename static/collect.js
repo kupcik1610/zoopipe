@@ -27,7 +27,9 @@
     var t = document.getElementById('sel-total');
     if (t) t.textContent = total + ' selected';
     var fab = document.querySelector('.process-fab');
-    if (fab) fab.textContent = total ? ('Process ' + total + ' picked ▸') : 'Process picked images ▸';
+    // leave the button alone once it's disabled for submit -- otherwise a click
+    // on Process schedules a recount that clobbers the "Downloading…" label.
+    if (fab && !fab.disabled) fab.textContent = total ? ('Process ' + total + ' picked ▸') : 'Process picked images ▸';
   }
 
   // app.js toggles the checkbox on card click during bubbling; defer so we read
@@ -129,12 +131,19 @@
   var procForm = document.querySelector('form.has-fab');
   if (procForm) procForm.addEventListener('submit', function (e) {
     if (procForm.dataset.submitting) { e.preventDefault(); return; }
-    procForm.dataset.submitting = '1';
     var fab = procForm.querySelector('.process-fab');
-    if (fab) {
-      fab.disabled = true;
-      fab.textContent = 'Processing… please wait';
-    }
+    if (!fab) return;                       // no button -> let it submit natively
+    procForm.dataset.submitting = '1';
+    // A native submit locks the page for navigation and the browser skips
+    // repainting the button change -- so hold the submit, update the button,
+    // let one frame paint (double rAF), THEN submit for real.
+    e.preventDefault();
+    var n = procForm.querySelectorAll('input.pick:checked').length;
+    fab.disabled = true;
+    fab.textContent = 'Downloading ' + n + ' image' + (n === 1 ? '' : 's') + '…';
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { procForm.submit(); });
+    });
   });
 
   function setAll(open) {

@@ -9,18 +9,32 @@
 
   var ICON = { done: '✓', processing: '⟳', ready: '•', error: '⚠' };
 
+  // per-frame upload state, kept across repaints: jobId -> {state, text}
+  // state: 'up' (in flight) | 'ok' | 'err'
+  var uploaded = {};
+  var jobsById = {};
+
+  function actionsHtml(j) {
+    if (j.status === 'error') {
+      return '<button type="button" class="retry" data-id="' + j.id + '">↻ retry</button>';
+    }
+    if (!(j.status === 'done' && j.frame)) return '';
+    var a = '<button type="button" class="rowbtn view" data-full="/out/' + j.frame + '">view</button>' +
+            '<a class="rowbtn edit" href="/edit?img=' + encodeURIComponent(j.frame) + '">edit</a>';
+    var u = uploaded[j.id];
+    var label = u ? (u.state === 'up' ? '…' : (u.state === 'ok' ? '✓ uploaded' : '↻ upload')) : 'upload';
+    a += '<button type="button" class="rowbtn upload" data-id="' + j.id + '"' +
+         (u && u.state === 'up' ? ' disabled' : '') + '>' + label + '</button>';
+    if (u && u.text) a += '<span class="up-msg ' + (u.state === 'err' ? 'err' : 'ok') + '">' + u.text + '</span>';
+    return a;
+  }
+
   function rowHtml(j) {
     var done = j.status === 'done' && j.frame;
     var img = done ? '/out/' + j.frame : '/out/' + j.orig;
     var thumb = '<img loading="lazy"' + (done ? ' data-rel="' + j.frame + '"' : '') +
                 ' src="' + img + '" alt="">';
-    var actions = '';
-    if (done) {
-      actions = '<button type="button" class="rowbtn view" data-full="/out/' + j.frame + '">view</button>' +
-                '<a class="rowbtn edit" href="/edit?img=' + encodeURIComponent(j.frame) + '">edit</a>';
-    } else if (j.status === 'error') {
-      actions = '<button type="button" class="retry" data-id="' + j.id + '">↻ retry</button>';
-    }
+    var actions = actionsHtml(j);
     return '<td class="jt-thumb">' + thumb + '</td>' +
            '<td class="jt-name"><span class="muted">#' + j.n + '</span></td>' +
            '<td class="jt-status status-' + j.status + '">' + (ICON[j.status] || '') + ' ' + j.status + '</td>' +
@@ -44,6 +58,7 @@
     var groupTot = {}, groupDone = {};
     d.jobs.forEach(function (j) {
       byId[j.id] = j;
+      jobsById[j.id] = j;
       groupTot[j.slug] = (groupTot[j.slug] || 0) + 1;
       if (j.status === 'done') groupDone[j.slug] = (groupDone[j.slug] || 0) + 1;
     });
@@ -96,6 +111,36 @@
         document.getElementById('sum-actions').hidden = true;
         setTimeout(tick, 600);
       });
+      return;
+    }
+    // push one finished frame to its product on minizoo
+    var ub = e.target.closest('button.upload');
+    if (ub) {
+      var uid = ub.getAttribute('data-id');
+      function repaintRow() {
+        var tr = rows.querySelector('tr[data-id="' + uid + '"]');
+        if (tr && jobsById[uid]) tr.querySelector('.jt-actions').innerHTML = actionsHtml(jobsById[uid]);
+      }
+      uploaded[uid] = { state: 'up', text: 'uploading…' };
+      repaintRow();
+      var ufd = new FormData(); ufd.append('csv', csv); ufd.append('id', uid);
+      fetch('/upload', { method: 'POST', body: ufd })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (res) {
+          var d = res.d || {};
+          if (res.ok && d.ok) {
+            uploaded[uid] = { state: 'ok', text: 'nahrané ✓' };
+          } else if (d.result === 'changed') {
+            uploaded[uid] = { state: 'err', text: '⚠ nahrané, ale zmenené iné polia' };
+          } else {
+            uploaded[uid] = { state: 'err', text: d.error || d.result || 'zlyhalo' };
+          }
+          repaintRow();
+        })
+        .catch(function () {
+          uploaded[uid] = { state: 'err', text: 'zlyhalo (sieť)' };
+          repaintRow();
+        });
       return;
     }
     // view a frame full-size in the shared lightbox (defined in app.js)

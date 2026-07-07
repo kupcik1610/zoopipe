@@ -133,12 +133,23 @@ def build_cards(name):
     by_idpr = {}
     for p in db.photos_for_csv(name):
         by_idpr.setdefault(p["idpr"], []).append(photo_dict(p))
+
+    # Latin names aren't unique: distinct animals (e.g. colour morphs) can share
+    # one Latin name while differing in Slovak. Where a Latin query is shared by
+    # rows with different Slovak names, append the Slovak name so each card
+    # searches for its own animal instead of all hitting the same results.
+    species = [row_species(row) for row in rows]
+    shared = {}
+    for display, query in species:
+        shared.setdefault(query, set()).add(display)
+
     cards = []
-    for row in rows:
+    for row, (display, query) in zip(rows, species):
         idpr = (row.get(COL_ID) or "").strip()
         if not idpr:
             continue
-        display, query = row_species(row)
+        if len(shared.get(query, ())) > 1 and display and display != query:
+            query = f"{query} {display}"
         photos = by_idpr.get(idpr, [])
         if any(x["uploaded"] for x in photos):
             state = "uploaded"
@@ -201,7 +212,13 @@ def index():
         return render_template("pick.html", title="categories",
                                cats=category_summary())
     flt = request.args.get("filter", "all")
+    q = (request.args.get("q") or "").strip()
     cards = build_cards(name)
+
+    if q:
+        needle = q.lower()
+        cards = [c for c in cards
+                 if needle in c["name"].lower() or needle in c["latin"].lower()]
 
     counts = tally_counts(cards)
 
@@ -221,7 +238,7 @@ def index():
     photos_json = json.dumps({c["idpr"]: c["photos"] for c in page_cards})
     return render_template(
         "index.html", title=name, name=name, cards=page_cards,
-        counts=counts, filter=flt, page=page, pages=pages, total=total,
+        counts=counts, filter=flt, q=q, page=page, pages=pages, total=total,
         photos_json=photos_json)
 
 

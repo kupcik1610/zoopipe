@@ -10,12 +10,19 @@
   <header class="top">
     <a class="brand" href="/">zoopipe</a>
     <a class="back" href="/">‹ categories</a>
+    <form class="search" method="get" action="/" role="search">
+      <input type="hidden" name="csv" value="{{ name }}">
+      <input type="hidden" name="filter" value="{{ filter }}">
+      <input type="search" name="q" value="{{ q }}" placeholder="Search species…"
+             autocomplete="off" aria-label="Search species">
+      {% if q %}<a class="search-clear" href="/?csv={{ name }}&filter={{ filter }}" aria-label="Clear search">×</a>{% endif %}
+    </form>
     <nav class="tabs">
       {% set tabs = [('all','All',counts.all),('todo','To do',counts.todo),
                      ('working','Working',counts.working),('done','Done',counts.done),
                      ('uploaded','Uploaded',counts.uploaded)] %}
       {% for key, label, n in tabs %}
-        <a href="/?csv={{ name }}&filter={{ key }}"
+        <a href="/?csv={{ name }}&filter={{ key }}{% if q %}&q={{ q|urlencode }}{% endif %}"
            class="{{ 'on' if filter == key else '' }}">{{ label }} <b data-count="{{ key }}">{{ n }}</b></a>
       {% endfor %}
     </nav>
@@ -45,15 +52,16 @@
         </div>
       </article>
     {% else %}
-      <p class="empty">Nothing here{% if filter != 'all' %} in “{{ filter }}”{% endif %}.</p>
+      <p class="empty">Nothing here{% if q %} matching “{{ q }}”{% elif filter != 'all' %} in “{{ filter }}”{% endif %}.</p>
     {% endfor %}
   </main>
 
   <nav class="pager">
-    {% if page > 1 %}<a href="/?csv={{ name }}&filter={{ filter }}&page={{ page - 1 }}">‹ prev</a>
+    {% set qs = '&q=' ~ (q|urlencode) if q else '' %}
+    {% if page > 1 %}<a href="/?csv={{ name }}&filter={{ filter }}{{ qs }}&page={{ page - 1 }}">‹ prev</a>
     {% else %}<span class="off">‹ prev</span>{% endif %}
     <span class="pmeta">page {{ page }} / {{ pages }} · {{ total }} species</span>
-    {% if page < pages %}<a href="/?csv={{ name }}&filter={{ filter }}&page={{ page + 1 }}">next ›</a>
+    {% if page < pages %}<a href="/?csv={{ name }}&filter={{ filter }}{{ qs }}&page={{ page + 1 }}">next ›</a>
     {% else %}<span class="off">next ›</span>{% endif %}
   </nav>
 

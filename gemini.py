@@ -36,9 +36,20 @@ from PIL import Image, ImageChops
 import imaging  # reuse CANVAS + _fit_on_white for a consistent white frame
 
 # ---- config knobs -----------------------------------------------------------
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-image")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-pro-image")
 GEMINI_ENDPOINT = os.environ.get(
     "GEMINI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta")
+# Output resolution. The model has no exact-pixel option -- it only emits fixed
+# aspect-ratio / size tiers, then imaging._fit_on_white downscales to the 600x470
+# CANVAS. 5:4 (1.25) is the closest ratio to 600:470 (~1.28), so padding is
+# minimal. 1K and 2K bill identically (1120 output tokens); 4K costs ~2x. So we
+# take the free upgrade to 2K and downscale ourselves. Override via env.
+GEMINI_ASPECT_RATIO = os.environ.get("GEMINI_ASPECT_RATIO", "5:4")
+GEMINI_IMAGE_SIZE = os.environ.get("GEMINI_IMAGE_SIZE", "2K")  # 1K|2K same price; 4K ~2x
+# Let the model check what a real <latin_name> looks like via Google Search
+# before drawing, so colours/markings match the actual species. Set 0 to disable.
+GEMINI_GROUNDING = os.environ.get("GEMINI_GROUNDING", "1").strip().lower() \
+    not in ("0", "false", "no", "off", "")
 # Push near-white pixels (all channels >= 255 - this) to pure #FFFFFF so the
 # generated background pads seamlessly onto the white frame. Kept tight so it
 # never bleaches genuinely-light animals. 0 disables.
@@ -132,24 +143,27 @@ def _prompt(latin_name, n_refs):
     ref = ("the attached reference photo" if n_refs == 1 else
            f"the {n_refs} attached reference photos (all the same species)")
     return (
-        f"A realistic product-catalogue photograph of a single '{latin_name}' "
-        f"(its Latin / scientific name).\n"
-        f"Base it closely on {ref}. TOP PRIORITY: reproduce the real animal "
-        f"accurately -- the exact colouration, markings, pattern, scale/skin "
-        f"texture and body proportions must match the reference and be correct for "
-        f"a real {latin_name}. Do not invent, restyle or 'beautify' the colours "
-        f"or pattern; keep the species identity faithful.\n"
-        f"You may improve on the reference in these ways ONLY:\n"
-        f"- Show the complete full body, centred and fully in frame. If the "
-        f"reference is cropped, or the animal is folded up, curled or turned away, "
-        f"extend it naturally and plausibly for the species -- whole tail, all "
-        f"limbs, both eyes.\n"
+        f"Look up the animal whose scientific (Latin) name is '{latin_name}' and "
+        f"recall exactly what a real one looks like -- its true colouration, "
+        f"markings, pattern, texture and body proportions. Then generate a "
+        f"realistic product-catalogue photograph of a single, live {latin_name}.\n"
+        f"Use {ref} as a loose visual guide, NOT a template to copy exactly. They "
+        f"are a rough outline of what to look for: lean on them for the lighting, "
+        f"the specific colour and markings of this animal, and its overall look "
+        f"and feel. Where a reference is unclear, cropped or atypical for the "
+        f"species, defer to how a real {latin_name} actually looks. Keep the "
+        f"species identity faithful and accurate; do not restyle or 'beautify' "
+        f"the colours or pattern.\n"
+        f"Requirements:\n"
+        f"- One whole animal: complete full body, centred and fully in frame -- "
+        f"whole tail, all limbs, both eyes. Extend it naturally if the references "
+        f"are cropped or the animal is curled, folded up or turned away.\n"
         f"- Correct anatomy: the right number of natural, well-formed "
-        f"fingers / toes / claws and limbs -- no missing, extra, fused, bent-back "
-        f"or hidden digits.\n"
+        f"fingers / toes / claws and limbs -- none missing, extra, fused, "
+        f"bent-back or hidden.\n"
         f"- A relaxed, natural pose and even, flattering lighting.\n"
-        f"Make it look like a genuine, sharp photograph -- NOT an illustration, "
-        f"painting or 3D render.\n"
+        f"- A genuine, sharp photograph -- NOT an illustration, painting or 3D "
+        f"render.\n"
         f"Background: pure solid white (#FFFFFF), seamless -- no floor, no shadow, "
         f"no props, no border, no text or watermark."
     )
@@ -165,7 +179,22 @@ def _call_gemini(images, latin_name):
             "data": base64.b64encode(image_bytes).decode("ascii"),
         }})
     # role is required by Vertex ("user"/"model"); AI Studio tolerates it too.
-    body = json.dumps({"contents": [{"role": "user", "parts": parts}]}).encode("utf-8")
+    request = {
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": {
+            # Grounding emits a short text reasoning step alongside the image, so
+            # allow both modalities; the parse loop below returns the image part
+            # and ignores any text.
+            "responseModalities": ["TEXT", "IMAGE"],
+            "imageConfig": {
+                "aspectRatio": GEMINI_ASPECT_RATIO,
+                "imageSize": GEMINI_IMAGE_SIZE,
+            },
+        },
+    }
+    if GEMINI_GROUNDING:
+        request["tools"] = [{"google_search": {}}]  # camel/snake both accepted
+    body = json.dumps(request).encode("utf-8")
 
     url, headers = _endpoint_and_headers()
     req = urllib.request.Request(url, data=body, method="POST", headers=headers)
@@ -236,7 +265,10 @@ def make_frame(images, latin_name):
 
     out = io.BytesIO()
     img.save(out, format="JPEG", quality=100, subsampling=0)
-    notes = [f"gemini:{GEMINI_MODEL}", f"latin:{latin_name}"]
+    notes = [f"gemini:{GEMINI_MODEL}", f"latin:{latin_name}",
+             f"res:{GEMINI_IMAGE_SIZE}@{GEMINI_ASPECT_RATIO}"]
+    if GEMINI_GROUNDING:
+        notes.append("grounded")
     if len(images) > 1:
         notes.append(f"refs:{len(images)}")
     return out.getvalue(), "jpg", notes

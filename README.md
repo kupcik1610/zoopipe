@@ -26,7 +26,7 @@ zavrieť a pokračovať.
 4. Pri hotovom pláte: **edit** (otočiť/zrkadliť, vždy sa vycentruje) a **upload**
    (na produkt v MiniZOO cez `upload.py`, `cookie.txt` musí byť prihlásený).
 
-Generovanie sa ladí v `gemini.py` (`GEMINI_MODEL`, prompt, `GEMINI_WHITE_CLAMP`);
+Generovanie sa ladí v `gemini.py` (`GEMINI_MODEL`, prompt, `GEMINI_BG_TOL`);
 veľkosť plátu je `CANVAS` v `imaging.py`.
 
 ## Spustenie

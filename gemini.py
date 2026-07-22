@@ -36,7 +36,7 @@ from PIL import Image, ImageChops
 import imaging  # reuse CANVAS + _fit_on_white for a consistent white frame
 
 # ---- config knobs -----------------------------------------------------------
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-pro-image")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-image")
 GEMINI_ENDPOINT = os.environ.get(
     "GEMINI_ENDPOINT", "https://generativelanguage.googleapis.com/v1beta")
 # Output resolution. The model has no exact-pixel option -- it only emits fixed
@@ -46,19 +46,24 @@ GEMINI_ENDPOINT = os.environ.get(
 # generates noticeably faster and is already far more detail than a 600x470 frame
 # needs, so downscaling from 1K loses nothing. Override via env.
 GEMINI_ASPECT_RATIO = os.environ.get("GEMINI_ASPECT_RATIO", "5:4")
-GEMINI_IMAGE_SIZE = os.environ.get("GEMINI_IMAGE_SIZE", "1K")  # 1K|2K same price; 1K is faster
+# 1K|2K same price; 1K is faster
+GEMINI_IMAGE_SIZE = os.environ.get("GEMINI_IMAGE_SIZE", "1K")
 # Let the model check what a real <latin_name> looks like via Google Search
 # before drawing, so colours/markings match the actual species. Set 0 to disable.
 GEMINI_GROUNDING = os.environ.get("GEMINI_GROUNDING", "1").strip().lower() \
     not in ("0", "false", "no", "off", "")
-# Push near-white pixels (all channels >= 255 - this) to pure #FFFFFF so the
-# generated background pads seamlessly onto the white frame. Kept tight so it
-# never bleaches genuinely-light animals. 0 disables.
-WHITE_CLAMP = int(os.environ.get("GEMINI_WHITE_CLAMP", "10"))
+# The generated background is measured from the image corners (which are always
+# background) and any pixel within BG_TOL of that measured colour is snapped to
+# pure #FFFFFF -- this kills the slight tint Gemini leaves without bleaching the
+# subject, which sits far from the background colour. BG_CORNER is the fraction
+# of each corner sampled to measure the background. GEMINI_BG_TOL=0 disables.
+BG_TOL = int(os.environ.get("GEMINI_BG_TOL", "20"))
+BG_CORNER = float(os.environ.get("GEMINI_BG_CORNER", "0.06"))
 TIMEOUT = int(os.environ.get("GEMINI_TIMEOUT", "120"))
 
 # ---- Vertex AI (Google Cloud credits) ---------------------------------------
-GEMINI_BACKEND = os.environ.get("GEMINI_BACKEND", "").strip().lower()  # ""|vertex|aistudio
+GEMINI_BACKEND = os.environ.get(
+    "GEMINI_BACKEND", "").strip().lower()  # ""|vertex|aistudio
 VERTEX_PROJECT = (os.environ.get("VERTEX_PROJECT")
                   or os.environ.get("GOOGLE_CLOUD_PROJECT") or "")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION") or "global"  # "" -> global
@@ -71,7 +76,8 @@ def _use_vertex():
         return True
     if GEMINI_BACKEND == "aistudio":
         return False
-    return bool(VERTEX_PROJECT)  # auto: Vertex as soon as a Cloud project is set
+    # auto: Vertex as soon as a Cloud project is set
+    return bool(VERTEX_PROJECT)
 
 
 def api_key():
@@ -104,7 +110,8 @@ def _access_token():
             headers={"Metadata-Flavor": "Google"})
         with urllib.request.urlopen(req, timeout=5) as r:
             d = json.loads(r.read())
-        _token.update(value=d["access_token"], exp=now + int(d.get("expires_in", 3600)))
+        _token.update(value=d["access_token"], exp=now +
+                      int(d.get("expires_in", 3600)))
         return _token["value"]
     except Exception:
         pass
@@ -128,7 +135,8 @@ def _endpoint_and_headers():
     """(url, headers) for the active backend."""
     if _use_vertex():
         if not VERTEX_PROJECT:
-            raise RuntimeError("VERTEX_PROJECT (or GOOGLE_CLOUD_PROJECT) not set")
+            raise RuntimeError(
+                "VERTEX_PROJECT (or GOOGLE_CLOUD_PROJECT) not set")
         host = ("aiplatform.googleapis.com" if VERTEX_LOCATION == "global"
                 else f"{VERTEX_LOCATION}-aiplatform.googleapis.com")
         url = (f"https://{host}/v1/projects/{VERTEX_PROJECT}/locations/"
@@ -212,7 +220,8 @@ def _call_gemini(images, latin_name):
     body = json.dumps(request).encode("utf-8")
 
     url, headers = _endpoint_and_headers()
-    req = urllib.request.Request(url, data=body, method="POST", headers=headers)
+    req = urllib.request.Request(
+        url, data=body, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             resp = json.loads(r.read())
@@ -227,7 +236,8 @@ def _call_gemini(images, latin_name):
     candidates = resp.get("candidates") or []
     if not candidates:
         fb = resp.get("promptFeedback", {}).get("blockReason")
-        raise RuntimeError(f"Gemini returned no candidates{f' (blocked: {fb})' if fb else ''}")
+        raise RuntimeError(
+            f"Gemini returned no candidates{f' (blocked: {fb})' if fb else ''}")
 
     parts = candidates[0].get("content", {}).get("parts") or []
     text_bits = []
@@ -238,18 +248,53 @@ def _call_gemini(images, latin_name):
         if part.get("text"):
             text_bits.append(part["text"].strip())
     note = " ".join(text_bits)[:200]
-    raise RuntimeError(f"Gemini returned no image{f': {note}' if note else ''}")
+    raise RuntimeError(
+        f"Gemini returned no image{f': {note}' if note else ''}")
+
+
+def _channel_median(hist):
+    """Median value (0-255) of a single-channel histogram."""
+    total = sum(hist)
+    if not total:
+        return 255
+    half, acc = total / 2, 0
+    for value, count in enumerate(hist):
+        acc += count
+        if acc >= half:
+            return value
+    return 255
+
+
+def _bg_color(img):
+    """Estimate the true background colour from the four corners. Uses the
+    per-channel median across all four corner patches, so a corner that happens
+    to clip the subject can't skew the result (needs <50% subject to stay
+    robust, which centred animal frames comfortably satisfy)."""
+    w, h = img.size
+    cw = max(1, int(w * BG_CORNER))
+    ch = max(1, int(h * BG_CORNER))
+    corners = [(0, 0, cw, ch), (w - cw, 0, w, ch),
+               (0, h - ch, cw, h), (w - cw, h - ch, w, h)]
+    patch = Image.new("RGB", (cw * 2, ch * 2))
+    for box, pos in zip(corners, [(0, 0), (cw, 0), (0, ch), (cw, ch)]):
+        patch.paste(img.crop(box), pos)
+    return tuple(_channel_median(band.histogram()) for band in patch.split())
 
 
 def _flatten_white(img):
-    """Snap near-white pixels to pure white so the bg pads seamlessly. Only
-    touches pixels whose darkest channel is already near 255, leaving genuinely
-    coloured (even bright) pixels alone."""
-    if WHITE_CLAMP <= 0:
+    """Measure the real background colour from the corners and snap every pixel
+    within BG_TOL of it (per-channel) to pure #FFFFFF. This removes any tint --
+    and its gradient/noise -- while leaving the subject untouched, since the
+    subject sits far from the measured background colour."""
+    if BG_TOL <= 0:
         return img
-    r, g, b = img.split()
-    darkest = ImageChops.darker(ImageChops.darker(r, g), b)
-    mask = darkest.point(lambda p: 255 if p >= 255 - WHITE_CLAMP else 0)
+    bg = _bg_color(img)
+    dist = None
+    for band, level in zip(img.split(), bg):
+        d = ImageChops.difference(band, Image.new("L", img.size, level))
+        dist = d if dist is None else ImageChops.lighter(
+            dist, d)  # max abs diff
+    mask = dist.point(lambda p: 255 if p <= BG_TOL else 0)
     white = Image.new("RGB", img.size, (255, 255, 255))
     return Image.composite(white, img, mask)
 

@@ -1,4 +1,3 @@
 ddgs
 pillow
-rembg[cpu]
 flask

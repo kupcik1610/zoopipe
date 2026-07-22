@@ -1,21 +1,15 @@
 #!/usr/bin/env python3
-"""Cut the background out with rembg (birefnet-general) and fit the subject onto
-a white catalogue frame. Shared by app.py and the worker.
+"""Fit a finished image onto the white catalogue frame, and re-frame it later
+(rotate / mirror / trim). Shared by gemini.py, worker.py and app.py.
 
-alpha-matting + mask post-processing were tried and dropped -- no visible gain
-over a plain birefnet mask plus the light edge feather below.
+Background removal used to live here (rembg); frames are now generated whole by
+Gemini on a white background (see gemini.py), so this module only handles raw
+byte sniffing and the white-frame geometry.
 """
-from rembg import remove as _rembg_remove, new_session
-from PIL import Image, ImageFilter, ImageChops
+from PIL import Image, ImageChops
 import io
-import os
 
 # ---- recipe knobs -----------------------------------------------------------
-REMBG_MODEL = os.environ.get("REMBG_MODEL", "birefnet-general")
-# Erode the alpha a couple px to eat the leftover bg fringe, then blur it so the
-# edge anti-aliases onto white instead of stair-stepping.
-EDGE_ERODE = 2        # px pulled inward off the subject edge
-EDGE_FEATHER = 1.5    # gaussian blur radius applied to the alpha mask
 CANVAS = (600, 470)   # final frame size; subject fitted, rest padded white
 
 
@@ -36,35 +30,6 @@ def _ext(b):
     if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
         return "webp"
     return "jpg"
-
-
-# ---- background removal (rembg) ---------------------------------------------
-_session = None
-
-
-def session():
-    """The rembg session, made once and reused (first call loads the ~1GB model)."""
-    global _session
-    if _session is None:
-        _session = new_session(REMBG_MODEL)
-    return _session
-
-
-def _smooth_alpha(img):
-    """Erode + feather the alpha so the cut-out edge sits cleanly on white.
-    Runs at full resolution, before any down-scale, for the softest edge."""
-    a = img.getchannel("A")
-    if EDGE_ERODE > 0:
-        a = a.filter(ImageFilter.MinFilter(EDGE_ERODE * 2 + 1))
-    if EDGE_FEATHER > 0:
-        a = a.filter(ImageFilter.GaussianBlur(EDGE_FEATHER))
-    img.putalpha(a)
-    return img
-
-
-def _cut_out(img):  # PIL in/out -> smoothed transparent RGBA cut-out (bg removed)
-    cut = _rembg_remove(img, session=session()).convert("RGBA")
-    return _smooth_alpha(cut)
 
 
 # ---- framing geometry (Pillow) ----------------------------------------------
@@ -98,35 +63,10 @@ def _nonwhite_bbox(img, thresh=12):
     return diff.getbbox()
 
 
-# ---- build / re-frame a catalogue frame -------------------------------------
-def make_frame(image_bytes):
-    """Raw photo -> finished frame: (out_bytes, ext, notes). Cut out the
-    background, trim to the subject, fit centered on white. Anything that can't
-    produce a real frame (bad bytes, rembg failure, empty cut-out) raises, so
-    process_one errors the job instead of saving a half-made or blank one."""
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-    img = _cut_out(img)
-
-    bbox = img.getchannel("A").getbbox()
-    if not bbox:
-        raise ValueError("empty cut-out: rembg found no subject")
-    img = _trim_to_subject(img, bbox)
-
-    # flatten onto white using the cut-out's own alpha (blends the feathered
-    # edges against white, no dark halo), then fit centered on the frame.
-    white = Image.new("RGB", img.size, (255, 255, 255))
-    white.paste(img, (0, 0), img)
-    img = _fit_on_white(white)
-
-    out = io.BytesIO()
-    # q100, 4:4:4: don't re-soften the edges we just feathered.
-    img.save(out, format="JPEG", quality=100, subsampling=0)
-    return out.getvalue(), "jpg", [f"bg-removed:{REMBG_MODEL}", "trimmed"]
-
-
+# ---- re-frame a finished catalogue frame ------------------------------------
 def adjust_frame(image_bytes, flip=False, rotate=0, trim=False):
-    """Re-frame an already-finished (white-bg) frame: rotate / trim / flip, no
-    rembg. Finds the subject by its non-white box since there's no alpha left."""
+    """Re-frame an already-finished (white-bg) frame: rotate / trim / flip.
+    Finds the subject by its non-white box."""
     notes = []
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")

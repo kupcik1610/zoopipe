@@ -8,7 +8,7 @@ species in any order and your place is implied by which photos exist.
 Connections are short-lived (WAL + busy timeout) so many can touch the DB at
 once; `claim_photo` uses BEGIN IMMEDIATE so a row is only ever picked up once.
 """
-import os, sqlite3, time
+import json, os, sqlite3, time
 from contextlib import contextmanager
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -50,7 +50,7 @@ def init():
                 species     TEXT NOT NULL,        -- display name (Slovak)
                 query       TEXT NOT NULL,        -- the term searched
                 folder      TEXT NOT NULL,        -- rel dir under out/ for this species
-                source_url  TEXT NOT NULL,
+                source_url  TEXT NOT NULL,        -- JSON list of picked image URLs (all refs for one frame)
                 orig_path   TEXT DEFAULT '',      -- rel under out/, set once downloaded
                 frame_path  TEXT DEFAULT '',      -- rel under out/, set when done
                 status      TEXT NOT NULL DEFAULT 'ready',
@@ -67,16 +67,31 @@ def init():
 
 
 # ---- photos -----------------------------------------------------------------
-def add_photo(csv, idpr, species, query, folder, source_url):
+def add_photo(csv, idpr, species, query, folder, source_urls):
+    """One job = one generated frame. `source_urls` is the list of picked image
+    URLs that all go into that one generation as references (stored as JSON)."""
+    if isinstance(source_urls, str):
+        source_urls = [source_urls]
     now = _now()
     with _db() as con:
         cur = con.execute(
             """INSERT INTO photos (csv, idpr, species, query, folder, source_url,
                                    status, created_at, updated_at)
                VALUES (?,?,?,?,?,?, 'ready', ?, ?)""",
-            (csv, idpr, species, query, folder, source_url, now, now),
+            (csv, idpr, species, query, folder, json.dumps(source_urls), now, now),
         )
         return cur.lastrowid
+
+
+def source_urls(row):
+    """The picked image URLs for a job. Reads the JSON list, tolerating older
+    rows that stored a single bare URL."""
+    raw = row["source_url"] or ""
+    try:
+        val = json.loads(raw)
+    except (ValueError, TypeError):
+        return [raw] if raw else []
+    return val if isinstance(val, list) else [val]
 
 
 def claim_photo():

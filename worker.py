@@ -2,12 +2,14 @@
 """Turn picked images into finished catalogue frames.
 
 `run()` takes `ready` photos from the ledger one at a time: download the
-original, background-remove it (imaging.make_frame), write the white frame, mark
-it done. app.py runs this in a daemon thread that lives for the app's lifetime.
+original, hand it to Gemini as a reference to generate a fresh white-background
+image of the same animal (gemini.make_frame), write the frame, mark it done.
+app.py runs this in a daemon thread that lives for the app's lifetime.
 """
 import os, time, urllib.request, urllib.error
 
 import db
+import gemini
 import imaging
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -50,20 +52,34 @@ def process_one(p):
     Never raises: every failure path (download, disk I/O, background removal) is
     turned into an ('error', ...) result so the caller can always finish the job.
     """
-    try:
-        raw = _download(p["source_url"])
-        if not imaging.is_image(raw):
-            return "error", "", None, "download: not an image"
-    except Exception as e:
-        return "error", "", None, f"download failed: {e}"
+    urls = db.source_urls(p)
+    raws = []
+    for u in urls:
+        try:
+            raw = _download(u)
+            if imaging.is_image(raw):
+                raws.append(raw)
+        except Exception:
+            continue  # a dud reference just gets skipped; others can still carry it
+    if not raws:
+        return "error", "", None, "download: no valid reference image"
 
     try:
-        orig_rel = f"{p['folder']}/originals/{p['id']}.{imaging._ext(raw)}"
-        _write_out(orig_rel, raw)
+        # keep every reference original on disk; the first one is the card preview
+        orig_rel = ""
+        for i, raw in enumerate(raws):
+            suffix = "" if i == 0 else f"_{i + 1}"
+            rel = f"{p['folder']}/originals/{p['id']}{suffix}.{imaging._ext(raw)}"
+            _write_out(rel, raw)
+            if i == 0:
+                orig_rel = rel
         db.set_orig_path(p["id"], orig_rel)
 
         t0 = time.time()
-        out, ext, notes = imaging.make_frame(raw)
+        # p["query"] is the Latin name (row_species prefers nazov_lat); fall
+        # back to the display name if a row somehow has no Latin.
+        latin = (p["query"] or p["species"] or "").strip()
+        out, ext, notes = gemini.make_frame(raws, latin)
         secs = round(time.time() - t0, 2)
 
         frame_rel = f"{p['folder']}/{p['id']}.{ext}"
@@ -79,7 +95,7 @@ def run():
     reset = db.reset_stale()
     if reset:
         log(f"reset {reset} stale job(s) -> ready")
-    log(f"draining queue (model '{imaging.REMBG_MODEL}'; first job loads it)…")
+    log(f"draining queue (generating frames with Gemini '{gemini.GEMINI_MODEL}')…")
     while True:
         try:
             p = db.claim_photo()

@@ -261,25 +261,23 @@ def search():
 
 @app.post("/process")
 def process():
-    """Queue the ticked images for a species and return instantly; they get
-    downloaded and framed in the background. Body: csv, idpr, urls[]."""
+    """Queue the ticked images for a species and return instantly. All picked
+    images become ONE job: they're sent together as references to Gemini, which
+    generates a single frame. Body: csv, idpr, urls[]."""
     name = request.form.get("csv", "")
     idpr = (request.form.get("idpr") or "").strip()
     urls = [u for u in request.form.getlist("url") if u.strip()]
     if not (name and idpr and urls):
         return jsonify({"ok": False, "error": "missing csv/idpr/urls"}), 400
-    # look the species up in the CSV so the queued rows carry a clean name
+    # look the species up in the CSV so the queued row carries a clean name
     display, query = idpr, idpr
     for row in read_csv(name):
         if (row.get(COL_ID) or "").strip() == idpr:
             display, query = row_species(row)
             break
     folder = folder_for(name, idpr, query)
-    added = []
-    for u in urls:
-        pid = db.add_photo(name, idpr, display, query, folder, u)
-        added.append(pid)
-    return jsonify({"ok": True, "ids": added})
+    pid = db.add_photo(name, idpr, display, query, folder, urls)
+    return jsonify({"ok": True, "ids": [pid]})
 
 
 @app.get("/status")

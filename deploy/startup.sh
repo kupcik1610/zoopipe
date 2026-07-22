@@ -9,13 +9,17 @@ set -ux   # NOTE: deliberately no -e / -o pipefail -- see above.
 APP_USER=zoopipe
 APP_HOME=/opt/zoopipe
 REPO=https://github.com/kupcik1610/zoopipe.git
-BRANCH=main
 
 META="http://metadata.google.internal/computeMetadata/v1"
 metadata() { curl -s -H "Metadata-Flavor: Google" "$META/$1"; }
 
 APP_KEY=$(metadata instance/attributes/app-key)
 DOMAIN=$(metadata instance/attributes/domain)
+GEMINI_KEY=$(metadata instance/attributes/gemini-key)          # AI Studio backend
+VERTEX_PROJECT=$(metadata instance/attributes/vertex-project)  # Vertex backend (Cloud credits)
+VERTEX_LOCATION=$(metadata instance/attributes/vertex-location)
+BRANCH=$(metadata instance/attributes/branch)                  # which git branch to run
+[ -n "$BRANCH" ] || BRANCH=main                                # default: prod on main
 
 id -u "$APP_USER" &>/dev/null || useradd -r -m -d "$APP_HOME" -s /usr/sbin/nologin "$APP_USER"
 mkdir -p "$APP_HOME"
@@ -45,11 +49,6 @@ UV="$APP_HOME/bin/uv"
 [ -d "$APP_HOME/venv" ] || "$UV" venv "$APP_HOME/venv" --python 3.12
 "$UV" pip install --python "$APP_HOME/venv/bin/python" -r "$APP_HOME/app/requirements.txt" || true
 
-# pre-fetch the ~1GB bg-removal model so the first Process job doesn't stall.
-# rembg caches to its default dir (~/.u2net) and skips the download if present.
-( cd "$APP_HOME/app" && "$APP_HOME/venv/bin/python" -c "import imaging; imaging.session()" ) || \
-  echo "WARN: model pre-download failed; first job will fetch it"
-
 chown -R "$APP_USER:$APP_USER" "$APP_HOME"
 
 # --- systemd service ---------------------------------------------------------
@@ -65,6 +64,9 @@ WorkingDirectory=$APP_HOME/app
 Environment=HOST=127.0.0.1
 Environment=PORT=5001
 Environment=APP_KEY=$APP_KEY
+Environment=GEMINI_API_KEY=$GEMINI_KEY
+Environment=VERTEX_PROJECT=$VERTEX_PROJECT
+Environment=VERTEX_LOCATION=$VERTEX_LOCATION
 ExecStart=$APP_HOME/venv/bin/python $APP_HOME/app/app.py
 Restart=always
 RestartSec=3

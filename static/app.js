@@ -190,7 +190,8 @@ async function doSearch(card, append) {
 function updatePicked(card) {
   const panel = card.querySelector("[data-panel]");
   const n = panel.querySelectorAll(".res.picked").length;
-  panel.querySelector(".pcount").textContent = n ? n + " picked" : "";
+  panel.querySelector(".pcount").textContent =
+    n ? (n > 1 ? n + " picked → 1 image" : "1 picked") : "";
   panel.querySelector(".pproc").disabled = !n;
 }
 

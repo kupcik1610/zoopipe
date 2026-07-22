@@ -42,10 +42,11 @@ GEMINI_ENDPOINT = os.environ.get(
 # Output resolution. The model has no exact-pixel option -- it only emits fixed
 # aspect-ratio / size tiers, then imaging._fit_on_white downscales to the 600x470
 # CANVAS. 5:4 (1.25) is the closest ratio to 600:470 (~1.28), so padding is
-# minimal. 1K and 2K bill identically (1120 output tokens); 4K costs ~2x. So we
-# take the free upgrade to 2K and downscale ourselves. Override via env.
+# minimal. 1K and 2K bill identically (1120 output tokens; 4K costs ~2x), but 1K
+# generates noticeably faster and is already far more detail than a 600x470 frame
+# needs, so downscaling from 1K loses nothing. Override via env.
 GEMINI_ASPECT_RATIO = os.environ.get("GEMINI_ASPECT_RATIO", "5:4")
-GEMINI_IMAGE_SIZE = os.environ.get("GEMINI_IMAGE_SIZE", "2K")  # 1K|2K same price; 4K ~2x
+GEMINI_IMAGE_SIZE = os.environ.get("GEMINI_IMAGE_SIZE", "1K")  # 1K|2K same price; 1K is faster
 # Let the model check what a real <latin_name> looks like via Google Search
 # before drawing, so colours/markings match the actual species. Set 0 to disable.
 GEMINI_GROUNDING = os.environ.get("GEMINI_GROUNDING", "1").strip().lower() \

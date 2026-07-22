@@ -150,19 +150,25 @@ def _endpoint_and_headers():
 
 def _prompt(latin_name, n_refs):
     ref = ("the attached reference photo" if n_refs == 1 else
-           f"the {n_refs} attached reference photos (all the same species)")
+           f"the {n_refs} attached reference photos (all the same animal)")
     return (
-        f"Look up the animal whose scientific (Latin) name is '{latin_name}' and "
-        f"recall exactly what a real one looks like -- its true colouration, "
-        f"markings, pattern, texture and body proportions. Then generate a "
-        f"realistic product-catalogue photograph of a single, live {latin_name}.\n"
-        f"Use {ref} as a loose visual guide, NOT a template to copy exactly. They "
-        f"are a rough outline of what to look for: lean on them for the lighting, "
-        f"the specific colour and markings of this animal, and its overall look "
-        f"and feel. Where a reference is unclear, cropped or atypical for the "
-        f"species, defer to how a real {latin_name} actually looks. Keep the "
-        f"species identity faithful and accurate; do not restyle or 'beautify' "
-        f"the colours or pattern.\n"
+        f"Generate a realistic product-catalogue photograph of a single, live "
+        f"{latin_name}, using {ref} as the AUTHORITATIVE source for what this "
+        f"specific animal looks like.\n"
+        f"Colour is decided by the photo, not by the species in general. "
+        f"Reproduce the exact colouration, markings, pattern, shading and texture "
+        f"shown in the reference as faithfully as you can, and treat it as this "
+        f"individual's true appearance even if it is unusual or atypical for a "
+        f"'{latin_name}'. Do NOT substitute the generic or textbook colours of the "
+        f"species, and do NOT restyle, recolour, brighten, saturate or 'beautify' "
+        f"it. If the reference disagrees with how a typical {latin_name} looks, the "
+        f"reference wins.\n"
+        f"Use your own knowledge of {latin_name} ONLY to complete and correct the "
+        f"animal where the photo does not show it: if the reference is cropped, "
+        f"partial, folded, curled or turned away, extend THE SAME animal -- same "
+        f"colours, same markings -- into a full, natural, anatomically-correct "
+        f"body. Never invent a differently-coloured or differently-patterned "
+        f"animal to fill in the missing parts.\n"
         f"Requirements:\n"
         f"- Exactly ONE individual animal, with exactly ONE head and ONE tail. "
         f"Never two heads, never a second head where the tail should be, never a "
